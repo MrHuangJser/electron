@@ -24,6 +24,7 @@
 #include "content/public/common/url_constants.h"
 #include "content/public/common/user_agent.h"
 #include "electron/grit/electron_resources.h"
+#include "net/base/filename_util.h"
 #include "net/base/net_errors.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
@@ -93,6 +94,7 @@ const char kBrowserCloseMethod[] = "Browser.close";
 void DevToolsManagerDelegate::StartHttpHandler() {
   base::FilePath session_data;
   base::FilePath debug_frontend_dir;
+  auto& command_line = *base::CommandLine::ForCurrentProcess();
   GURL custom_devtools_frontend_url(
       command_line.GetSwitchValueASCII("custom-devtools-frontend"));
   if (custom_devtools_frontend_url.SchemeIsFile()) {

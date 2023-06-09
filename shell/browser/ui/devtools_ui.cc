@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright(c) 2012 The Chromium Authors.All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE-CHROMIUM file.
 
@@ -26,11 +26,22 @@
 // static
 GURL GetCustomDevToolsFrontendURL() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kCustomDevtoolsFrontend)) {
+  if (command_line->HasSwitch("custom-devtools-frontend")) {
     return GURL(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
         "custom-devtools-frontend"));
   }
   return GURL();
+}
+
+// static
+scoped_refptr<base::RefCountedMemory> ReadFileForDevTools(
+    const base::FilePath& path) {
+  std::string buffer;
+  // if (!base::ReadFileToString(path, &buffer)) {
+  //   LOG(ERROR) << "Failed to read " << path;
+  //   return CreateNotFoundResponse();
+  // }
+  return base::MakeRefCounted<base::RefCountedString>(std::move(buffer));
 }
 
 namespace electron {
@@ -80,6 +91,18 @@ std::string GetMimeTypeForUrl(const GURL& url) {
   return "text/html";
 }
 
+std::string StripDevToolsRevisionWithPrefix(const std::string& path,
+                                            const std::string& prefix) {
+  if (base::StartsWith(path, prefix, base::CompareCase::INSENSITIVE_ASCII)) {
+    std::size_t found = path.find("/", prefix.length() + 1);
+    if (found != std::string::npos) {
+      return path.substr(found + 1);
+    }
+    DLOG(ERROR) << "Unexpected URL format, falling back to the original URL.";
+  }
+  return path;
+}
+
 class BundledDataSource : public content::URLDataSource {
  public:
   BundledDataSource() = default;
@@ -92,6 +115,28 @@ class BundledDataSource : public content::URLDataSource {
   // content::URLDataSource implementation.
   std::string GetSource() override { return chrome::kChromeUIDevToolsHost; }
 
+  bool MaybeHandleCustomRequest(const std::string& path,
+                                GotDataCallback* callback) {
+    GURL custom_devtools_frontend = GetCustomDevToolsFrontendURL();
+    if (!custom_devtools_frontend.is_valid())
+      return false;
+    std::string stripped_path =
+        StripDevToolsRevisionWithPrefix(path, "serve_rev/");
+    stripped_path =
+        StripDevToolsRevisionWithPrefix(stripped_path, "serve_file/");
+    stripped_path =
+        StripDevToolsRevisionWithPrefix(stripped_path, "serve_internal_file/");
+    if (custom_devtools_frontend.SchemeIsFile()) {
+      // Fetch from file system but strip all the params.
+      StartFileRequest(PathWithoutParams(stripped_path), std::move(*callback));
+      return true;
+    }
+    // GURL remote_url(custom_devtools_frontend.spec() + stripped_path);
+    // Fetch from remote URL.
+    // StartCustomDataRequest(remote_url, std::move(*callback));
+    return true;
+  }
+
   void StartDataRequest(const GURL& url,
                         const content::WebContents::Getter& wc_getter,
                         GotDataCallback callback) override {
@@ -99,21 +144,23 @@ class BundledDataSource : public content::URLDataSource {
     // Serve request from local bundle.
     std::string bundled_path_prefix(chrome::kChromeUIDevToolsBundledPath);
     bundled_path_prefix += "/";
-    GURL custom_devtools_frontend = GetCustomDevToolsFrontendURL();
-    if (!custom_devtools_frontend.is_valid()) {
-      if (base::StartsWith(path, bundled_path_prefix,
-                           base::CompareCase::INSENSITIVE_ASCII)) {
-        StartBundledDataRequest(path.substr(bundled_path_prefix.length()),
-                                std::move(callback));
-        return;
+    if (base::StartsWith(path, bundled_path_prefix,
+                         base::CompareCase::INSENSITIVE_ASCII)) {
+      std::string path_without_params = PathWithoutParams(path);
+
+      DCHECK(base::StartsWith(path_without_params, bundled_path_prefix,
+                              base::CompareCase::INSENSITIVE_ASCII));
+      std::string path_under_bundled =
+          path_without_params.substr(bundled_path_prefix.length());
+      if (!MaybeHandleCustomRequest(path_under_bundled, &callback)) {
+        // Fetch from packaged resources.
+        StartBundledDataRequest(path_under_bundled, std::move(callback));
       }
       return;
-    }
 
-    if (GetCustomDevToolsFrontendURL().SchemeIsFile()) {
-      // Fetch from file system.
-      StartFileRequest(path_under_bundled, std::move(callback));
-      return;
+      // StartBundledDataRequest(path.substr(bundled_path_prefix.length()),
+      //                         std::move(callback));
+      // return;
     }
 
     // We do not handle remote and custom requests.
@@ -143,16 +190,6 @@ class BundledDataSource : public content::URLDataSource {
     std::move(callback).Run(bytes);
   }
 
-  scoped_refptr<base::RefCountedMemory> ReadFileForDevTools(
-      const base::FilePath& path) {
-    std::string buffer;
-    // if (!base::ReadFileToString(path, &buffer)) {
-    //   LOG(ERROR) << "Failed to read " << path;
-    //   return CreateNotFoundResponse();
-    // }
-    return base::RefCountedString::TakeString(&buffer);
-  }
-
   void StartFileRequest(const std::string& path, GotDataCallback callback) {
     base::FilePath base_path;
     GURL custom_devtools_frontend = GetCustomDevToolsFrontendURL();
@@ -163,7 +200,8 @@ class BundledDataSource : public content::URLDataSource {
     //   return;
     // }
     base::FilePath full_path = base_path.AppendASCII(path);
-    CHECK(base_path.IsParent(full_path));
+    LOG(INFO) << "StartFileRequest: " << full_path.value();
+    // CHECK(base_path.IsParent(full_path));
 
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE,
