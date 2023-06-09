@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/command_line.h"
 #include "base/guid.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -64,6 +65,27 @@
 #include "extensions/common/permissions/permissions_data.h"
 #include "shell/browser/electron_browser_context.h"
 #endif
+
+// static
+GURL DecorateFrontendURL(const GURL& base_url) {
+  std::string frontend_url = base_url.spec();
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+
+  // if (command_line->HasSwitch(switches::kDevToolsFlags)) {
+  //   frontend_url = frontend_url +
+  //                  ((frontend_url.find("?") == std::string::npos) ? "?" :
+  //                  "&") +
+  //                  command_line->GetSwitchValueASCII(switches::kDevToolsFlags);
+  // }
+
+  if (command_line->HasSwitch("custom-devtools-frontend")) {
+    frontend_url = frontend_url +
+                   ((frontend_url.find("?") == std::string::npos) ? "?" : "&") +
+                   "debugFrontend=true";
+  }
+
+  return GURL(frontend_url);
+}
 
 namespace electron {
 
@@ -458,9 +480,9 @@ void InspectableWebContents::ShowDevTools(bool activate) {
 
   Observe(GetDevToolsWebContents());
   AttachTo(content::DevToolsAgentHost::GetOrCreateFor(web_contents_.get()));
-
+  GURL url(GetDevToolsURL(can_dock_));
   GetDevToolsWebContents()->GetController().LoadURL(
-      GetDevToolsURL(can_dock_), content::Referrer(),
+      DecorateFrontendURL(url), content::Referrer(),
       ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
 }
 

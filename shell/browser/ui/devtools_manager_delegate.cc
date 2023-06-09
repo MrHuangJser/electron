@@ -92,9 +92,15 @@ const char kBrowserCloseMethod[] = "Browser.close";
 // static
 void DevToolsManagerDelegate::StartHttpHandler() {
   base::FilePath session_data;
+  base::FilePath debug_frontend_dir;
+  GURL custom_devtools_frontend_url(
+      command_line.GetSwitchValueASCII("custom-devtools-frontend"));
+  if (custom_devtools_frontend_url.SchemeIsFile()) {
+    net::FileURLToFilePath(custom_devtools_frontend_url, &debug_frontend_dir);
+  }
   base::PathService::Get(DIR_SESSION_DATA, &session_data);
   content::DevToolsAgentHost::StartRemoteDebuggingServer(
-      CreateSocketFactory(), session_data, base::FilePath());
+      CreateSocketFactory(), session_data, debug_frontend_dir);
 }
 
 DevToolsManagerDelegate::DevToolsManagerDelegate() = default;

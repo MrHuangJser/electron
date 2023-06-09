@@ -8,15 +8,30 @@
 #include <string>
 #include <utility>
 
+#include "base/command_line.h"
+#include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/thread_pool.h"
 #include "chrome/common/webui_url_constants.h"
 #include "content/public/browser/devtools_frontend_host.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
+#include "net/base/filename_util.h"
+
+// static
+GURL GetCustomDevToolsFrontendURL() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kCustomDevtoolsFrontend)) {
+    return GURL(base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+        "custom-devtools-frontend"));
+  }
+  return GURL();
+}
 
 namespace electron {
 
@@ -84,10 +99,20 @@ class BundledDataSource : public content::URLDataSource {
     // Serve request from local bundle.
     std::string bundled_path_prefix(chrome::kChromeUIDevToolsBundledPath);
     bundled_path_prefix += "/";
-    if (base::StartsWith(path, bundled_path_prefix,
-                         base::CompareCase::INSENSITIVE_ASCII)) {
-      StartBundledDataRequest(path.substr(bundled_path_prefix.length()),
-                              std::move(callback));
+    GURL custom_devtools_frontend = GetCustomDevToolsFrontendURL();
+    if (!custom_devtools_frontend.is_valid()) {
+      if (base::StartsWith(path, bundled_path_prefix,
+                           base::CompareCase::INSENSITIVE_ASCII)) {
+        StartBundledDataRequest(path.substr(bundled_path_prefix.length()),
+                                std::move(callback));
+        return;
+      }
+      return;
+    }
+
+    if (GetCustomDevToolsFrontendURL().SchemeIsFile()) {
+      // Fetch from file system.
+      StartFileRequest(path_under_bundled, std::move(callback));
       return;
     }
 
@@ -116,6 +141,36 @@ class BundledDataSource : public content::URLDataSource {
         << ". If you compiled with debug_devtools=1, try running with "
            "--debug-devtools.";
     std::move(callback).Run(bytes);
+  }
+
+  scoped_refptr<base::RefCountedMemory> ReadFileForDevTools(
+      const base::FilePath& path) {
+    std::string buffer;
+    // if (!base::ReadFileToString(path, &buffer)) {
+    //   LOG(ERROR) << "Failed to read " << path;
+    //   return CreateNotFoundResponse();
+    // }
+    return base::RefCountedString::TakeString(&buffer);
+  }
+
+  void StartFileRequest(const std::string& path, GotDataCallback callback) {
+    base::FilePath base_path;
+    GURL custom_devtools_frontend = GetCustomDevToolsFrontendURL();
+    DCHECK(custom_devtools_frontend.SchemeIsFile());
+    // if (!net::FileURLToFilePath(custom_devtools_frontend, &base_path)) {
+    //   std::move(callback).Run(CreateNotFoundResponse());
+    //   LOG(WARNING) << "Unable to find DevTools resource: " << path;
+    //   return;
+    // }
+    base::FilePath full_path = base_path.AppendASCII(path);
+    CHECK(base_path.IsParent(full_path));
+
+    base::ThreadPool::PostTaskAndReplyWithResult(
+        FROM_HERE,
+        {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN,
+         base::TaskPriority::USER_VISIBLE},
+        base::BindOnce(ReadFileForDevTools, std::move(full_path)),
+        std::move(callback));
   }
 };
 
