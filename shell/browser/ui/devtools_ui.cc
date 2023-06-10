@@ -10,6 +10,7 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/strcat.h"
@@ -33,14 +34,20 @@ GURL GetCustomDevToolsFrontendURL() {
   return GURL();
 }
 
+scoped_refptr<base::RefCountedMemory> CreateNotFoundResponse() {
+  const char kHttpNotFound[] = "HTTP/1.1 404 Not Found\n\n";
+  return base::MakeRefCounted<base::RefCountedStaticMemory>(
+      kHttpNotFound, strlen(kHttpNotFound));
+}
+
 // static
 scoped_refptr<base::RefCountedMemory> ReadFileForDevTools(
     const base::FilePath& path) {
   std::string buffer;
-  // if (!base::ReadFileToString(path, &buffer)) {
-  //   LOG(ERROR) << "Failed to read " << path;
-  //   return CreateNotFoundResponse();
-  // }
+  if (!base::ReadFileToString(path, &buffer)) {
+    LOG(ERROR) << "Failed to read " << path;
+    return CreateNotFoundResponse();
+  }
   return base::MakeRefCounted<base::RefCountedString>(std::move(buffer));
 }
 
@@ -194,14 +201,14 @@ class BundledDataSource : public content::URLDataSource {
     base::FilePath base_path;
     GURL custom_devtools_frontend = GetCustomDevToolsFrontendURL();
     DCHECK(custom_devtools_frontend.SchemeIsFile());
-    // if (!net::FileURLToFilePath(custom_devtools_frontend, &base_path)) {
-    //   std::move(callback).Run(CreateNotFoundResponse());
-    //   LOG(WARNING) << "Unable to find DevTools resource: " << path;
-    //   return;
-    // }
+    if (!net::FileURLToFilePath(custom_devtools_frontend, &base_path)) {
+      std::move(callback).Run(CreateNotFoundResponse());
+      LOG(WARNING) << "Unable to find DevTools resource: " << path;
+      return;
+    }
     base::FilePath full_path = base_path.AppendASCII(path);
-    LOG(INFO) << "StartFileRequest: " << full_path.value();
-    // CHECK(base_path.IsParent(full_path));
+    DLOG(INFO) << "StartFileRequest: " << full_path.value();
+    CHECK(base_path.IsParent(full_path));
 
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE,
