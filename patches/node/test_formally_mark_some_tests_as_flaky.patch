@@ -7,13 +7,16 @@ Instead of disabling the tests, flag them as flaky so they still run
 but don't cause CI failures on flakes.
 
 diff --git a/test/parallel/parallel.status b/test/parallel/parallel.status
-index fa425fdcfc475ba2d5ba9a2492ea4481914a7cce..840c2f657467ede0e3737ea1aee55e07e39f353a 100644
+index 28f25e4be7e3104894e53a22e50f5474e0b7bc76..2525b094e1eb936d311a0b57fc9579df360883d6 100644
 --- a/test/parallel/parallel.status
 +++ b/test/parallel/parallel.status
-@@ -5,6 +5,13 @@ prefix parallel
+@@ -5,6 +5,16 @@ prefix parallel
  # sample-test                        : PASS,FLAKY
  
  [true] # This section applies to all platforms
++# https://github.com/nodejs/node/pull/50327
++# Currently there's no reliable way to test it.
++test-diagnostics-channel-memory-leak: SKIP
 +test-inspector-multisession-ws: PASS, FLAKY
 +test-heapsnapshot-near-heap-limit-by-api-in-worker: PASS, FLAKY
 +test-heapsnapshot-near-heap-limit-worker: PASS, FLAKY
@@ -21,11 +24,11 @@ index fa425fdcfc475ba2d5ba9a2492ea4481914a7cce..840c2f657467ede0e3737ea1aee55e07
 +test-cluster-bind-privileged-port: PASS, FLAKY
 +test-cluster-shared-handle-bind-privileged-port: PASS, FLAKY
 +test-debugger-random-port-with-inspect-port: PASS, FLAKY
- 
- [$system==win32]
- # https://github.com/nodejs/node/issues/41206
+ # https://github.com/nodejs/node/issues/52273
+ test-net-write-fully-async-hex-string: PASS, FLAKY
+ # https://github.com/nodejs/node/issues/52273
 diff --git a/test/sequential/sequential.status b/test/sequential/sequential.status
-index a5e2d38ff31aa8b90f3b99783b16cec086b4f30e..b8afe3d88b5af4756663f45fad81105e9b7f0e7e 100644
+index ccab879b6e5fcdcc0d3a4b790b97db94d92f1a59..11339325697ae98f6996101163679590451c0b81 100644
 --- a/test/sequential/sequential.status
 +++ b/test/sequential/sequential.status
 @@ -7,6 +7,18 @@ prefix sequential

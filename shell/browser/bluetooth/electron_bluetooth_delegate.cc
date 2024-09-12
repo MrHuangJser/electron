@@ -9,7 +9,6 @@
 
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "build/build_config.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "device/bluetooth/bluetooth_device.h"
@@ -161,7 +160,7 @@ void ElectronBluetoothDelegate::ShowDevicePairPrompt(
     const std::u16string& device_identifier,
     PairPromptCallback callback,
     PairingKind pairing_kind,
-    const absl::optional<std::u16string>& pin) {
+    const std::optional<std::u16string>& pin) {
   auto* web_contents = content::WebContents::FromRenderFrameHost(frame);
   if (web_contents) {
     auto* permission_manager = static_cast<ElectronPermissionManager*>(

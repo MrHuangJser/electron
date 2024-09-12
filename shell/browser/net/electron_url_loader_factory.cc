@@ -4,9 +4,9 @@
 
 #include "shell/browser/net/electron_url_loader_factory.h"
 
-#include <list>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/containers/fixed_flat_map.h"
@@ -33,6 +33,7 @@
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_converters/net_converter.h"
 #include "shell/common/gin_converters/value_converter.h"
+#include "shell/common/gin_helper/dictionary.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 
 #include "shell/common/node_includes.h"
@@ -48,7 +49,7 @@ struct Converter<electron::ProtocolType> {
                      electron::ProtocolType* out) {
     using Val = electron::ProtocolType;
     static constexpr auto Lookup =
-        base::MakeFixedFlatMap<base::StringPiece, Val>({
+        base::MakeFixedFlatMap<std::string_view, Val>({
             // note "free" is internal type, not allowed to be passed from user
             {"buffer", Val::kBuffer},
             {"file", Val::kFile},
@@ -211,7 +212,7 @@ void ElectronURLLoaderFactory::RedirectedRequest::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
     const net::HttpRequestHeaders& modified_cors_exempt_headers,
-    const absl::optional<GURL>& new_url) {
+    const std::optional<GURL>& new_url) {
   // Update |request_| with info from the redirect, so that it's accurate
   // The following references code in WorkerScriptLoader::FollowRedirect
   bool should_clear_upload = false;
@@ -592,7 +593,7 @@ void ElectronURLLoaderFactory::StartLoadingStream(
     // Note that We must submit a empty body otherwise NetworkService would
     // crash.
     client_remote->OnReceiveResponse(std::move(head), std::move(consumer),
-                                     absl::nullopt);
+                                     std::nullopt);
     producer.reset();  // The data pipe is empty.
     client_remote->OnComplete(network::URLLoaderCompletionStatus(net::OK));
     return;
@@ -640,7 +641,7 @@ void ElectronURLLoaderFactory::SendContents(
   }
 
   client_remote->OnReceiveResponse(std::move(head), std::move(consumer),
-                                   absl::nullopt);
+                                   std::nullopt);
 
   auto write_data = std::make_unique<WriteData>();
   write_data->client = std::move(client_remote);
@@ -649,11 +650,11 @@ void ElectronURLLoaderFactory::SendContents(
       std::make_unique<mojo::DataPipeProducer>(std::move(producer));
   auto* producer_ptr = write_data->producer.get();
 
-  base::StringPiece string_piece(write_data->data);
+  std::string_view string_view(write_data->data);
   producer_ptr->Write(
       std::make_unique<mojo::StringDataSource>(
-          string_piece, mojo::StringDataSource::AsyncWritingMode::
-                            STRING_STAYS_VALID_UNTIL_COMPLETION),
+          string_view, mojo::StringDataSource::AsyncWritingMode::
+                           STRING_STAYS_VALID_UNTIL_COMPLETION),
       base::BindOnce(OnWrite, std::move(write_data)));
 }
 

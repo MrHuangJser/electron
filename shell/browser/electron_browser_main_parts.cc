@@ -5,6 +5,7 @@
 #include "shell/browser/electron_browser_main_parts.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,15 +19,14 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/icon_manager.h"
 #include "chrome/browser/ui/color/chrome_color_mixers.h"
-#include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/os_crypt/sync/key_storage_config_linux.h"
 #include "components/os_crypt/sync/key_storage_util_linux.h"
 #include "components/os_crypt/sync/os_crypt.h"
+#include "components/password_manager/core/browser/password_manager_switches.h"  // nogncheck
 #include "content/browser/browser_main_loop.h"  // nogncheck
 #include "content/public/browser/browser_child_process_host_delegate.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
@@ -34,6 +34,7 @@
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/device_service.h"
+#include "content/public/browser/download_manager.h"
 #include "content/public/browser/first_party_sets_handler.h"
 #include "content/public/browser/web_ui_controller_factory.h"
 #include "content/public/common/content_features.h"
@@ -41,12 +42,10 @@
 #include "content/public/common/process_type.h"
 #include "content/public/common/result_codes.h"
 #include "electron/buildflags/buildflags.h"
-#include "electron/fuses.h"
 #include "media/base/localized_strings.h"
 #include "services/network/public/cpp/features.h"
 #include "services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.h"
 #include "shell/app/electron_main_delegate.h"
-#include "shell/browser/api/electron_api_app.h"
 #include "shell/browser/api/electron_api_utility_process.h"
 #include "shell/browser/browser.h"
 #include "shell/browser/browser_process_impl.h"
@@ -64,15 +63,14 @@
 #include "shell/common/logging.h"
 #include "shell/common/node_bindings.h"
 #include "shell/common/node_includes.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/idle/idle.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/color/color_provider_manager.h"
+#include "ui/display/screen.h"
+#include "url/url_util.h"
 
 #if defined(USE_AURA)
-#include "ui/display/display.h"
-#include "ui/display/screen.h"
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
 #include "ui/wm/core/wm_state.h"
 #endif
@@ -81,6 +79,7 @@
 #include "base/environment.h"
 #include "chrome/browser/ui/views/dark_mode_manager_linux.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
+#include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/dbus_bluez_manager_wrapper_linux.h"
 #include "electron/electron_gtk_stubs.h"
 #include "ui/base/cursor/cursor_factory.h"
@@ -94,6 +93,7 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
+#include "chrome/browser/win/chrome_select_file_dialog_factory.h"
 #include "ui/base/l10n/l10n_util_win.h"
 #include "ui/gfx/system_fonts_win.h"
 #include "ui/strings/grit/app_locale_settings.h"
@@ -133,6 +133,8 @@ class LinuxUiGetterImpl : public ui::LinuxUiGetter {
  public:
   LinuxUiGetterImpl() = default;
   ~LinuxUiGetterImpl() override = default;
+
+  // ui::LinuxUiGetter
   ui::LinuxUiTheme* GetForWindow(aura::Window* window) override {
     return GetForProfile(nullptr);
   }
@@ -141,11 +143,6 @@ class LinuxUiGetterImpl : public ui::LinuxUiGetter {
   }
 };
 #endif
-
-template <typename T>
-void Erase(T* container, typename T::iterator iter) {
-  container->erase(iter);
-}
 
 #if BUILDFLAG(IS_WIN)
 int GetMinimumFontSize() {
@@ -307,12 +304,12 @@ int ElectronBrowserMainParts::PreCreateThreads() {
   // We must set this env first to make ui::ResourceBundle accept the custom
   // locale.
   auto env = base::Environment::Create();
-  absl::optional<std::string> lc_all;
+  std::optional<std::string> lc_all;
   if (!locale.empty()) {
     std::string str;
     if (env->GetVar("LC_ALL", &str))
       lc_all.emplace(std::move(str));
-    env->SetVar("LC_ALL", locale.c_str());
+    env->SetVar("LC_ALL", locale);
   }
 #endif
 
@@ -396,12 +393,6 @@ void ElectronBrowserMainParts::ToolkitInitialized() {
   auto* linux_ui = ui::GetDefaultLinuxUi();
   CHECK(linux_ui);
   linux_ui_getter_ = std::make_unique<LinuxUiGetterImpl>();
-
-  // Try loading gtk symbols used by Electron.
-  electron::InitializeElectron_gtk(gtk::GetLibGtk());
-  if (!electron::IsElectron_gtkInitialized()) {
-    electron::UninitializeElectron_gtk();
-  }
 
   electron::InitializeElectron_gdk_pixbuf(gtk::GetLibGdkPixbuf());
   CHECK(electron::IsElectron_gdk_pixbufInitialized())
@@ -488,6 +479,11 @@ int ElectronBrowserMainParts::PreMainMessageLoopRun() {
 
   fake_browser_process_->PreMainMessageLoopRun();
 
+#if BUILDFLAG(IS_WIN)
+  ui::SelectFileDialog::SetFactory(
+      std::make_unique<ChromeSelectFileDialogFactory>());
+#endif
+
   return GetExitCode();
 }
 
@@ -504,11 +500,13 @@ void ElectronBrowserMainParts::PostCreateMainMessageLoop() {
 #endif
 #if BUILDFLAG(IS_LINUX)
   auto shutdown_cb =
-      base::BindOnce(base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
+      base::BindOnce([] { LOG(FATAL) << "Failed to shutdown."; });
   ui::OzonePlatform::GetInstance()->PostCreateMainMessageLoop(
       std::move(shutdown_cb),
       content::GetUIThreadTaskRunner({content::BrowserTaskType::kUserInput}));
-  bluez::DBusBluezManagerWrapperLinux::Initialize();
+
+  if (!bluez::BluezDBusManager::IsInitialized())
+    bluez::DBusBluezManagerWrapperLinux::Initialize();
 
   // Set up crypt config. This needs to be done before anything starts the
   // network service, as the raw encryption key needs to be shared with the
@@ -518,13 +516,14 @@ void ElectronBrowserMainParts::PostCreateMainMessageLoop() {
   std::unique_ptr<os_crypt::Config> config =
       std::make_unique<os_crypt::Config>();
   // Forward to os_crypt the flag to use a specific password store.
-  config->store = command_line.GetSwitchValueASCII(::switches::kPasswordStore);
+  config->store =
+      command_line.GetSwitchValueASCII(password_manager::kPasswordStore);
   config->product_name = app_name;
   config->application_name = app_name;
   // c.f.
   // https://source.chromium.org/chromium/chromium/src/+/main:chrome/common/chrome_switches.cc;l=689;drc=9d82515060b9b75fa941986f5db7390299669ef1
   config->should_use_preference =
-      command_line.HasSwitch(::switches::kEnableEncryptionSelection);
+      command_line.HasSwitch(password_manager::kEnableEncryptionSelection);
   base::PathService::Get(DIR_SESSION_DATA, &config->user_data_path);
 
   bool use_backend = !config->should_use_preference ||
@@ -597,6 +596,7 @@ void ElectronBrowserMainParts::PostMainMessageLoopRun() {
   node_env_->set_trace_sync_io(false);
   js_env_->DestroyMicrotasksRunner();
   node::Stop(node_env_.get(), node::StopFlags::kDoNotTerminateIsolate);
+  node_bindings_->set_uv_env(nullptr);
   node_env_.reset();
 
   auto default_context_key = ElectronBrowserContext::PartitionKey("", false);

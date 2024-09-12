@@ -5,11 +5,10 @@
 #ifndef ELECTRON_SHELL_BROWSER_UI_VIEWS_ELECTRON_VIEWS_DELEGATE_H_
 #define ELECTRON_SHELL_BROWSER_UI_VIEWS_ELECTRON_VIEWS_DELEGATE_H_
 
-#include <map>
 #include <memory>
 #include <string>
 
-#include "base/compiler_specific.h"
+#include "base/containers/flat_map.h"
 #include "ui/views/views_delegate.h"
 
 namespace electron {
@@ -49,8 +48,8 @@ class ViewsDelegate : public views::ViewsDelegate {
 #endif
   std::unique_ptr<views::NonClientFrameView> CreateDefaultNonClientFrameView(
       views::Widget* widget) override;
-  void AddRef() override;
-  void ReleaseRef() override;
+  void AddRef() override {}
+  void ReleaseRef() override {}
   void OnBeforeWidgetInit(
       views::Widget::InitParams* params,
       views::internal::NativeWidgetDelegate* delegate) override;
@@ -58,8 +57,6 @@ class ViewsDelegate : public views::ViewsDelegate {
 
  private:
 #if BUILDFLAG(IS_WIN)
-  using AppbarAutohideEdgeMap = std::map<HMONITOR, int>;
-
   // Callback on main thread with the edges. |returned_edges| is the value that
   // was returned from the call to GetAutohideEdges() that initiated the lookup.
   void OnGotAppbarAutohideEdges(base::OnceClosure callback,
@@ -67,7 +64,7 @@ class ViewsDelegate : public views::ViewsDelegate {
                                 int returned_edges,
                                 int edges);
 
-  AppbarAutohideEdgeMap appbar_autohide_edge_map_;
+  base::flat_map<HMONITOR, int> appbar_autohide_edge_map_;
   // If true we're in the process of notifying a callback from
   // GetAutohideEdges().start a new query.
   bool in_autohide_edges_callback_ = false;

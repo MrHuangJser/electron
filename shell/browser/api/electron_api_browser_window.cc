@@ -4,33 +4,23 @@
 
 #include "shell/browser/api/electron_api_browser_window.h"
 
-#include "base/task/single_thread_task_runner.h"
-#include "content/browser/renderer_host/render_widget_host_impl.h"  // nogncheck
 #include "content/browser/renderer_host/render_widget_host_owner_delegate.h"  // nogncheck
 #include "content/browser/web_contents/web_contents_impl.h"  // nogncheck
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/common/color_parser.h"
 #include "shell/browser/api/electron_api_web_contents_view.h"
 #include "shell/browser/browser.h"
-#include "shell/browser/native_browser_view.h"
+#include "shell/browser/native_window.h"
 #include "shell/browser/web_contents_preferences.h"
 #include "shell/browser/window_list.h"
 #include "shell/common/color_util.h"
 #include "shell/common/gin_helper/constructor.h"
 #include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/error_thrower.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
 #include "shell/common/options_switches.h"
 #include "ui/gl/gpu_switching_manager.h"
-
-#if defined(TOOLKIT_VIEWS)
-#include "shell/browser/native_window_views.h"
-#endif
-
-#if BUILDFLAG(IS_WIN)
-#include "shell/browser/ui/views/win_frame_view.h"
-#endif
 
 namespace electron::api {
 
@@ -70,11 +60,15 @@ BrowserWindow::BrowserWindow(gin::Arguments* args,
     web_preferences.SetHidden("webContents", value);
   }
 
+  if (!web_preferences.Has(options::kShow))
+    web_preferences.Set(options::kShow, true);
+
   // Creates the WebContentsView.
   gin::Handle<WebContentsView> web_contents_view =
       WebContentsView::Create(isolate, web_preferences);
   DCHECK(web_contents_view.get());
   window_->AddDraggableRegionProvider(web_contents_view.get());
+  web_contents_view_.Reset(isolate, web_contents_view.ToV8());
 
   // Save a reference of the WebContents.
   gin::Handle<WebContents> web_contents =
@@ -90,7 +84,14 @@ BrowserWindow::BrowserWindow(gin::Arguments* args,
   InitWithArgs(args);
 
   // Install the content view after BaseWindow's JS code is initialized.
-  SetContentView(gin::CreateHandle<View>(isolate, web_contents_view.get()));
+  // The WebContentsView is added a sibling of BaseWindow's contentView (before
+  // it in the paint order) so that any views added to BrowserWindow's
+  // contentView will be painted on top of the BrowserWindow's WebContentsView.
+  // See https://github.com/electron/electron/pull/41256.
+  // Note that |GetContentsView|, confusingly, does not refer to the same thing
+  // as |BaseWindow::GetContentView|.
+  window()->GetContentsView()->AddChildViewAt(web_contents_view->view(), 0);
+  window()->GetContentsView()->DeprecatedLayoutImmediately();
 
   // Init window after everything has been setup.
   window()->InitFromOptions(options);
@@ -101,8 +102,6 @@ BrowserWindow::~BrowserWindow() {
     // Cleanup the observers if user destroyed this instance directly instead of
     // gracefully closing content::WebContents.
     api_web_contents_->RemoveObserver(this);
-    // Destroy the WebContents.
-    OnCloseContents();
     api_web_contents_->Destroy();
   }
 }
@@ -127,10 +126,6 @@ void BrowserWindow::OnRendererUnresponsive(content::RenderProcessHost*) {
 void BrowserWindow::WebContentsDestroyed() {
   api_web_contents_ = nullptr;
   CloseImmediately();
-}
-
-void BrowserWindow::OnCloseContents() {
-  BaseWindow::ResetBrowserViews();
 }
 
 void BrowserWindow::OnRendererResponsive(content::RenderProcessHost*) {
@@ -187,26 +182,6 @@ void BrowserWindow::OnCloseButtonClicked(bool* prevent_default) {
   // Required to make beforeunload handler work.
   api_web_contents_->NotifyUserActivation();
 
-  // Trigger beforeunload events for associated BrowserViews.
-  for (NativeBrowserView* view : window_->browser_views()) {
-    auto* iwc = view->GetInspectableWebContents();
-    if (!iwc)
-      continue;
-
-    auto* vwc = iwc->GetWebContents();
-    auto* api_web_contents = api::WebContents::From(vwc);
-
-    // Required to make beforeunload handler work.
-    if (api_web_contents)
-      api_web_contents->NotifyUserActivation();
-
-    if (vwc) {
-      if (vwc->NeedToFireBeforeUnloadOrUnloadEvents()) {
-        vwc->DispatchBeforeUnload(false /* auto_cancel */);
-      }
-    }
-  }
-
   if (web_contents()->NeedToFireBeforeUnloadOrUnloadEvents()) {
     web_contents()->DispatchBeforeUnload(false /* auto_cancel */);
   } else {
@@ -246,7 +221,7 @@ void BrowserWindow::OnWindowIsKeyChanged(bool is_key) {
 void BrowserWindow::OnWindowLeaveFullScreen() {
 #if BUILDFLAG(IS_MAC)
   if (web_contents()->IsFullscreen())
-    web_contents()->ExitFullscreen();
+    web_contents()->ExitFullscreen(true);
 #endif
   BaseWindow::OnWindowLeaveFullScreen();
 }
@@ -288,29 +263,16 @@ void BrowserWindow::Blur() {
 void BrowserWindow::SetBackgroundColor(const std::string& color_name) {
   BaseWindow::SetBackgroundColor(color_name);
   SkColor color = ParseCSSColor(color_name);
-  web_contents()->SetPageBaseBackgroundColor(color);
-  auto* rwhv = web_contents()->GetRenderWidgetHostView();
-  if (rwhv) {
-    rwhv->SetBackgroundColor(color);
-    static_cast<content::RenderWidgetHostViewBase*>(rwhv)
-        ->SetContentBackgroundColor(color);
-  }
-  // Also update the web preferences object otherwise the view will be reset on
-  // the next load URL call
   if (api_web_contents_) {
+    api_web_contents_->SetBackgroundColor(color);
+    // Also update the web preferences object otherwise the view will be reset
+    // on the next load URL call
     auto* web_preferences =
         WebContentsPreferences::From(api_web_contents_->web_contents());
     if (web_preferences) {
       web_preferences->SetBackgroundColor(ParseCSSColor(color_name));
     }
   }
-}
-
-void BrowserWindow::SetBrowserView(
-    absl::optional<gin::Handle<BrowserView>> browser_view) {
-  BaseWindow::ResetBrowserViews();
-  if (browser_view)
-    BaseWindow::AddBrowserView(*browser_view);
 }
 
 void BrowserWindow::FocusOnWebView() {
@@ -331,65 +293,6 @@ v8::Local<v8::Value> BrowserWindow::GetWebContents(v8::Isolate* isolate) {
     return v8::Null(isolate);
   return v8::Local<v8::Value>::New(isolate, web_contents_);
 }
-
-#if BUILDFLAG(IS_WIN)
-void BrowserWindow::SetTitleBarOverlay(const gin_helper::Dictionary& options,
-                                       gin_helper::Arguments* args) {
-  // Ensure WCO is already enabled on this window
-  if (!window_->titlebar_overlay_enabled()) {
-    args->ThrowError("Titlebar overlay is not enabled");
-    return;
-  }
-
-  auto* window = static_cast<NativeWindowViews*>(window_.get());
-  bool updated = false;
-
-  // Check and update the button color
-  std::string btn_color;
-  if (options.Get(options::kOverlayButtonColor, &btn_color)) {
-    // Parse the string as a CSS color
-    SkColor color;
-    if (!content::ParseCssColorString(btn_color, &color)) {
-      args->ThrowError("Could not parse color as CSS color");
-      return;
-    }
-
-    // Update the view
-    window->set_overlay_button_color(color);
-    updated = true;
-  }
-
-  // Check and update the symbol color
-  std::string symbol_color;
-  if (options.Get(options::kOverlaySymbolColor, &symbol_color)) {
-    // Parse the string as a CSS color
-    SkColor color;
-    if (!content::ParseCssColorString(symbol_color, &color)) {
-      args->ThrowError("Could not parse symbol color as CSS color");
-      return;
-    }
-
-    // Update the view
-    window->set_overlay_symbol_color(color);
-    updated = true;
-  }
-
-  // Check and update the height
-  int height = 0;
-  if (options.Get(options::kOverlayHeight, &height)) {
-    window->set_titlebar_overlay_height(height);
-    updated = true;
-  }
-
-  // If anything was updated, invalidate the layout and schedule a paint of the
-  // window's frame view
-  if (updated) {
-    auto* frame_view = static_cast<WinFrameView*>(
-        window->widget()->non_client_view()->frame_view());
-    frame_view->InvalidateCaptionButtons();
-  }
-}
-#endif
 
 void BrowserWindow::ScheduleUnresponsiveEvent(int ms) {
   if (!window_unresponsive_closure_.IsCancelled())
@@ -448,9 +351,6 @@ void BrowserWindow::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("focusOnWebView", &BrowserWindow::FocusOnWebView)
       .SetMethod("blurWebView", &BrowserWindow::BlurWebView)
       .SetMethod("isWebViewFocused", &BrowserWindow::IsWebViewFocused)
-#if BUILDFLAG(IS_WIN)
-      .SetMethod("setTitleBarOverlay", &BrowserWindow::SetTitleBarOverlay)
-#endif
       .SetProperty("webContents", &BrowserWindow::GetWebContents);
 }
 

@@ -7,6 +7,7 @@
 #include <iterator>
 #include <memory>
 #include <set>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "third_party/blink/public/web/web_text_checking_completion.h"
 #include "third_party/blink/public/web/web_text_checking_result.h"
 #include "third_party/icu/source/common/unicode/uscript.h"
+#include "v8/include/v8-function.h"
 
 namespace electron::api {
 
@@ -108,22 +110,17 @@ void SpellCheckClient::RequestCheckingOfText(
       std::make_unique<SpellcheckRequest>(text, std::move(completionCallback));
 
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&SpellCheckClient::SpellCheckText, AsWeakPtr()));
+      FROM_HERE, base::BindOnce(&SpellCheckClient::SpellCheckText,
+                                weak_factory_.GetWeakPtr()));
 }
 
 bool SpellCheckClient::IsSpellCheckingEnabled() const {
   return true;
 }
 
-void SpellCheckClient::ShowSpellingUI(bool show) {}
-
 bool SpellCheckClient::IsShowingSpellingUI() {
   return false;
 }
-
-void SpellCheckClient::UpdateSpellingUIWithMisspelledWord(
-    const blink::WebString& word) {}
 
 void SpellCheckClient::SpellCheckText() {
   const auto& text = pending_request_param_->text();
@@ -147,7 +144,7 @@ void SpellCheckClient::SpellCheckText() {
     return;
   }
 
-  text_iterator_.SetText(text.c_str(), text.size());
+  text_iterator_.SetText(text);
 
   SpellCheckScope scope(*this);
   std::u16string word;
@@ -219,13 +216,13 @@ void SpellCheckClient::SpellCheckWords(const SpellCheckScope& scope,
   DCHECK(!scope.spell_check_.IsEmpty());
 
   auto context = isolate_->GetCurrentContext();
-  gin_helper::MicrotasksScope microtasks_scope(
-      isolate_, context->GetMicrotaskQueue(),
-      v8::MicrotasksScope::kDoNotRunMicrotasks);
+  gin_helper::MicrotasksScope microtasks_scope{
+      isolate_, context->GetMicrotaskQueue(), false,
+      v8::MicrotasksScope::kDoNotRunMicrotasks};
 
   v8::Local<v8::FunctionTemplate> templ = gin_helper::CreateFunctionTemplate(
-      isolate_,
-      base::BindRepeating(&SpellCheckClient::OnSpellCheckDone, AsWeakPtr()));
+      isolate_, base::BindRepeating(&SpellCheckClient::OnSpellCheckDone,
+                                    weak_factory_.GetWeakPtr()));
   v8::Local<v8::Value> args[] = {gin::ConvertToV8(isolate_, words),
                                  templ->GetFunction(context).ToLocalChecked()};
   // Call javascript with the words and the callback function
@@ -245,7 +242,7 @@ bool SpellCheckClient::IsContraction(
     std::vector<std::u16string>* contraction_words) {
   DCHECK(contraction_iterator_.IsInitialized());
 
-  contraction_iterator_.SetText(contraction.c_str(), contraction.length());
+  contraction_iterator_.SetText(contraction);
 
   std::u16string word;
   size_t word_start;

@@ -13,14 +13,12 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/hang_watcher.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/platform_util.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
@@ -77,16 +75,8 @@ FileSelectHelper::~FileSelectHelper() {
     select_file_dialog_->ListenerDestroyed();
 }
 
-void FileSelectHelper::FileSelected(const base::FilePath& path,
-                                    int index,
-                                    void* params) {
-  FileSelectedWithExtraInfo(ui::SelectedFileInfo(path, path), index, params);
-}
-
-void FileSelectHelper::FileSelectedWithExtraInfo(
-    const ui::SelectedFileInfo& file,
-    int index,
-    void* params) {
+void FileSelectHelper::FileSelected(const ui::SelectedFileInfo& file,
+                                    int index) {
   if (!render_frame_host_) {
     RunFileChooserEnd();
     return;
@@ -101,21 +91,11 @@ void FileSelectHelper::FileSelectedWithExtraInfo(
   std::vector<ui::SelectedFileInfo> files;
   files.push_back(file);
 
-  MultiFilesSelectedWithExtraInfo(files, params);
+  MultiFilesSelected(files);
 }
 
 void FileSelectHelper::MultiFilesSelected(
-    const std::vector<base::FilePath>& files,
-    void* params) {
-  std::vector<ui::SelectedFileInfo> selected_files =
-      ui::FilePathListToSelectedFileInfoList(files);
-
-  MultiFilesSelectedWithExtraInfo(selected_files, params);
-}
-
-void FileSelectHelper::MultiFilesSelectedWithExtraInfo(
-    const std::vector<ui::SelectedFileInfo>& files,
-    void* params) {
+    const std::vector<ui::SelectedFileInfo>& files) {
 #if BUILDFLAG(IS_MAC)
   base::ThreadPool::PostTask(
       FROM_HERE,
@@ -126,7 +106,7 @@ void FileSelectHelper::MultiFilesSelectedWithExtraInfo(
 #endif  // BUILDFLAG(IS_MAC)
 }
 
-void FileSelectHelper::FileSelectionCanceled(void* params) {
+void FileSelectHelper::FileSelectionCanceled() {
   RunFileChooserEnd();
 }
 
@@ -167,7 +147,7 @@ void FileSelectHelper::OnListDone(int error) {
   std::unique_ptr<ActiveDirectoryEnumeration> entry =
       std::move(directory_enumeration_);
   if (error) {
-    FileSelectionCanceled(nullptr);
+    FileSelectionCanceled();
     return;
   }
 

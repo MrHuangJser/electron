@@ -7,7 +7,11 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
+#include "services/network/public/cpp/wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/host_resolver.mojom.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "shell/browser/javascript_environment.h"
 #include "shell/common/api/electron_bindings.h"
 #include "shell/common/gin_converters/file_path_converter.h"
@@ -17,6 +21,41 @@
 #include "shell/services/node/parent_port.h"
 
 namespace electron {
+
+URLLoaderBundle::URLLoaderBundle() = default;
+
+URLLoaderBundle::~URLLoaderBundle() = default;
+
+URLLoaderBundle* URLLoaderBundle::GetInstance() {
+  static base::NoDestructor<URLLoaderBundle> instance;
+  return instance.get();
+}
+
+void URLLoaderBundle::SetURLLoaderFactory(
+    mojo::PendingRemote<network::mojom::URLLoaderFactory> pending_factory,
+    mojo::Remote<network::mojom::HostResolver> host_resolver,
+    bool use_network_observer_from_url_loader_factory) {
+  factory_ = network::SharedURLLoaderFactory::Create(
+      std::make_unique<network::WrapperPendingSharedURLLoaderFactory>(
+          std::move(pending_factory)));
+  host_resolver_ = std::move(host_resolver);
+  should_use_network_observer_from_url_loader_factory_ =
+      use_network_observer_from_url_loader_factory;
+}
+
+scoped_refptr<network::SharedURLLoaderFactory>
+URLLoaderBundle::GetSharedURLLoaderFactory() {
+  return factory_;
+}
+
+network::mojom::HostResolver* URLLoaderBundle::GetHostResolver() {
+  DCHECK(host_resolver_);
+  return host_resolver_.get();
+}
+
+bool URLLoaderBundle::ShouldUseNetworkObserverfromURLLoaderFactory() const {
+  return should_use_network_observer_from_url_loader_factory_;
+}
 
 NodeService::NodeService(
     mojo::PendingReceiver<node::mojom::NodeService> receiver)
@@ -41,6 +80,11 @@ void NodeService::Initialize(node::mojom::NodeServiceParamsPtr params) {
     return;
 
   ParentPort::GetInstance()->Initialize(std::move(params->port));
+
+  URLLoaderBundle::GetInstance()->SetURLLoaderFactory(
+      std::move(params->url_loader_factory),
+      mojo::Remote(std::move(params->host_resolver)),
+      params->use_network_observer_from_url_loader_factory);
 
   js_env_ = std::make_unique<JavascriptEnvironment>(node_bindings_->uv_loop());
 
@@ -68,7 +112,7 @@ void NodeService::Initialize(node::mojom::NodeServiceParamsPtr params) {
         js_env_->DestroyMicrotasksRunner();
         node::Stop(env, node::StopFlags::kDoNotTerminateIsolate);
         node_env_stopped_ = true;
-        receiver_.ResetWithReason(exit_code, "");
+        receiver_.ResetWithReason(exit_code, "process_exit_termination");
       });
 
   node_env_->set_trace_sync_io(node_env_->options()->trace_sync_io);

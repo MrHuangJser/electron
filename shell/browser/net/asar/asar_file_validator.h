@@ -5,14 +5,12 @@
 #ifndef ELECTRON_SHELL_BROWSER_NET_ASAR_ASAR_FILE_VALIDATOR_H_
 #define ELECTRON_SHELL_BROWSER_NET_ASAR_ASAR_FILE_VALIDATOR_H_
 
-#include <algorithm>
 #include <memory>
 
 #include "crypto/secure_hash.h"
 #include "mojo/public/cpp/system/file_data_source.h"
 #include "mojo/public/cpp/system/filtered_data_source.h"
 #include "shell/common/asar/archive.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace asar {
 
@@ -25,6 +23,7 @@ class AsarFileValidator : public mojo::FilteredDataSource::Filter {
   AsarFileValidator(const AsarFileValidator&) = delete;
   AsarFileValidator& operator=(const AsarFileValidator&) = delete;
 
+  // mojo::FilteredDataSource::Filter
   void OnRead(base::span<char> buffer,
               mojo::FileDataSource::ReadResult* result) override;
 

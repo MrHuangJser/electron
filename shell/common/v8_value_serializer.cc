@@ -34,9 +34,9 @@ class V8Serializer : public v8::ValueSerializer::Delegate {
   ~V8Serializer() override = default;
 
   bool Serialize(v8::Local<v8::Value> value, blink::CloneableMessage* out) {
-    gin_helper::MicrotasksScope microtasks_scope(
-        isolate_, isolate_->GetCurrentContext()->GetMicrotaskQueue(),
-        v8::MicrotasksScope::kDoNotRunMicrotasks);
+    gin_helper::MicrotasksScope microtasks_scope{
+        isolate_, isolate_->GetCurrentContext()->GetMicrotaskQueue(), false,
+        v8::MicrotasksScope::kDoNotRunMicrotasks};
     WriteBlinkEnvelope(19);
 
     serializer_.WriteHeader();
@@ -49,10 +49,12 @@ class V8Serializer : public v8::ValueSerializer::Delegate {
     }
     DCHECK(wrote_value);
 
-    std::pair<uint8_t*, size_t> buffer = serializer_.Release();
-    DCHECK_EQ(buffer.first, data_.data());
-    out->encoded_message = base::make_span(buffer.first, buffer.second);
+    const auto [data_bytes, data_len] = serializer_.Release();
+    DCHECK_EQ(std::data(data_), data_bytes);
+    DCHECK_GE(std::size(data_), data_len);
+    data_.resize(data_len);
     out->owned_encoded_message = std::move(data_);
+    out->encoded_message = out->owned_encoded_message;
     out->sender_agent_cluster_id =
         blink::WebMessagePort::GetEmbedderAgentClusterID();
 

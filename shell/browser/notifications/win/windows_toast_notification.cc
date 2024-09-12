@@ -14,9 +14,11 @@
 #include <wrl\wrappers\corewrappers.h>
 
 #include "base/environment.h"
+#include "base/hash/hash.h"
 #include "base/logging.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util_win.h"
-#include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "shell/browser/notifications/notification_delegate.h"
@@ -38,23 +40,22 @@ using Microsoft::WRL::Wrappers::HStringReference;
 
 namespace winui = ABI::Windows::UI;
 
-#define RETURN_IF_FAILED(hr) \
-  do {                       \
-    HRESULT _hrTemp = hr;    \
-    if (FAILED(_hrTemp)) {   \
-      return _hrTemp;        \
-    }                        \
+#define RETURN_IF_FAILED(hr)                           \
+  do {                                                 \
+    if (const HRESULT _hrTemp = hr; FAILED(_hrTemp)) { \
+      return _hrTemp;                                  \
+    }                                                  \
   } while (false)
-#define REPORT_AND_RETURN_IF_FAILED(hr, msg)                             \
-  do {                                                                   \
-    HRESULT _hrTemp = hr;                                                \
-    std::string _msgTemp = msg;                                          \
-    if (FAILED(_hrTemp)) {                                               \
-      std::string _err = _msgTemp + ",ERROR " + std::to_string(_hrTemp); \
-      DebugLog(_err);                                                    \
-      Notification::NotificationFailed(_err);                            \
-      return _hrTemp;                                                    \
-    }                                                                    \
+
+#define REPORT_AND_RETURN_IF_FAILED(hr, msg)                              \
+  do {                                                                    \
+    if (const HRESULT _hrTemp = hr; FAILED(_hrTemp)) {                    \
+      std::string _err =                                                  \
+          base::StrCat({msg, ", ERROR ", base::NumberToString(_hrTemp)}); \
+      DebugLog(_err);                                                     \
+      Notification::NotificationFailed(_err);                             \
+      return _hrTemp;                                                     \
+    }                                                                     \
   } while (false)
 
 namespace electron {
@@ -68,6 +69,10 @@ constexpr wchar_t kGroup[] = L"Notifications";
 void DebugLog(std::string_view log_msg) {
   if (base::Environment::Create()->HasVar("ELECTRON_DEBUG_NOTIFICATIONS"))
     LOG(INFO) << log_msg;
+}
+
+std::wstring GetTag(const std::string& notification_id) {
+  return base::NumberToWString(base::Hash(notification_id));
 }
 
 }  // namespace
@@ -145,7 +150,7 @@ void WindowsToastNotification::Remove() {
     return;
 
   ScopedHString group(kGroup);
-  ScopedHString tag(base::as_wcstr(base::UTF8ToUTF16(notification_id())));
+  ScopedHString tag(GetTag(notification_id()));
   notification_history->RemoveGroupedTagWithId(tag, group, app_id);
 }
 
@@ -198,7 +203,7 @@ HRESULT WindowsToastNotification::ShowInternal(
   REPORT_AND_RETURN_IF_FAILED(toast2->put_Group(group),
                               "WinAPI: Setting group failed");
 
-  ScopedHString tag(base::as_wcstr(base::UTF8ToUTF16(notification_id())));
+  ScopedHString tag(GetTag(notification_id()));
   REPORT_AND_RETURN_IF_FAILED(toast2->put_Tag(tag),
                               "WinAPI: Setting tag failed");
 
@@ -539,7 +544,7 @@ HRESULT WindowsToastNotification::SetXmlImage(IXmlDocument* doc,
   ComPtr<IXmlNode> src_attr;
   RETURN_IF_FAILED(attrs->GetNamedItem(src, &src_attr));
 
-  ScopedHString img_path(icon_path.c_str());
+  const ScopedHString img_path{icon_path};
   if (!img_path.success())
     return E_FAIL;
 

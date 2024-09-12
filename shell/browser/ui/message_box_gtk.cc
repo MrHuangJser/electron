@@ -4,11 +4,9 @@
 
 #include "shell/browser/ui/message_box.h"
 
-#include <map>
-
 #include "base/containers/contains.h"
+#include "base/containers/flat_map.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/no_destructor.h"
@@ -43,12 +41,12 @@ MessageBoxSettings::~MessageBoxSettings() = default;
 namespace {
 
 // <ID, messageBox> map
-std::map<int, GtkWidget*>& GetDialogsMap() {
-  static base::NoDestructor<std::map<int, GtkWidget*>> dialogs;
+base::flat_map<int, GtkWidget*>& GetDialogsMap() {
+  static base::NoDestructor<base::flat_map<int, GtkWidget*>> dialogs;
   return *dialogs;
 }
 
-class GtkMessageBox : public NativeWindowObserver {
+class GtkMessageBox : private NativeWindowObserver {
  public:
   explicit GtkMessageBox(const MessageBoxSettings& settings)
       : id_(settings.id),
@@ -183,6 +181,7 @@ class GtkMessageBox : public NativeWindowObserver {
     Show();
   }
 
+  // NativeWindowObserver
   void OnWindowClosed() override {
     parent_->RemoveObserver(this);
     parent_ = nullptr;
@@ -193,7 +192,7 @@ class GtkMessageBox : public NativeWindowObserver {
 
  private:
   // The id of the dialog.
-  absl::optional<int> id_;
+  std::optional<int> id_;
 
   // The id to return when the dialog is closed without pressing buttons.
   int cancel_id_ = 0;

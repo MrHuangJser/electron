@@ -15,6 +15,7 @@
 #include "components/net_log/chrome_net_log.h"
 #include "content/public/browser/storage_partition.h"
 #include "electron/electron_version.h"
+#include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "net/log/net_log_capture_mode.h"
 #include "shell/browser/electron_browser_context.h"
@@ -125,7 +126,7 @@ v8::Local<v8::Promise> NetLog::StartLogging(base::FilePath log_path,
   }
 
   pending_start_promise_ =
-      absl::make_optional<gin_helper::Promise<void>>(args->isolate());
+      std::make_optional<gin_helper::Promise<void>>(args->isolate());
   v8::Local<v8::Promise> handle = pending_start_promise_->GetHandle();
 
   auto command_line_string =

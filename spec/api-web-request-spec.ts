@@ -328,7 +328,7 @@ describe('webRequest module', () => {
         ses.webRequest.onBeforeSendHeaders((details, callback) => {
           const requestHeaders = details.requestHeaders;
           requestHeaders.Accept = '*/*;test/header';
-          callback({ requestHeaders: requestHeaders });
+          callback({ requestHeaders });
         });
         const { data } = await ajax('no-cors://fake-host/redirect');
         expect(data).to.equal('header-received');
@@ -341,7 +341,7 @@ describe('webRequest module', () => {
       ses.webRequest.onBeforeSendHeaders((details, callback) => {
         const requestHeaders = details.requestHeaders;
         requestHeaders.Origin = 'http://new-origin';
-        callback({ requestHeaders: requestHeaders });
+        callback({ requestHeaders });
       });
       const { data } = await ajax(defaultURL);
       expect(data).to.equal('/new/origin');
@@ -474,7 +474,7 @@ describe('webRequest module', () => {
 
     it('does not change content-disposition header by default', async () => {
       ses.webRequest.onHeadersReceived((details, callback) => {
-        expect(details.responseHeaders!['content-disposition']).to.deep.equal([' attachment; filename="aa中aa.txt"']);
+        expect(details.responseHeaders!['content-disposition']).to.deep.equal(['attachment; filename=aa中aa.txt']);
         callback({});
       });
       const { data, headers } = await ajax(defaultURL + 'contentDisposition');

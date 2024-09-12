@@ -2,7 +2,10 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
+#include <string_view>
+
 #include "shell/common/gin_helper/promise.h"
+#include "v8/include/v8-context.h"
 
 namespace gin_helper {
 
@@ -27,31 +30,38 @@ PromiseBase& PromiseBase::operator=(PromiseBase&&) = default;
 
 v8::Maybe<bool> PromiseBase::Reject() {
   v8::HandleScope handle_scope(isolate());
-  gin_helper::MicrotasksScope microtasks_scope(
-      isolate(), GetContext()->GetMicrotaskQueue());
-  v8::Context::Scope context_scope(GetContext());
+  v8::Local<v8::Context> context = GetContext();
+  gin_helper::MicrotasksScope microtasks_scope{
+      isolate(), context->GetMicrotaskQueue(), false,
+      v8::MicrotasksScope::kRunMicrotasks};
+  v8::Context::Scope context_scope(context);
 
-  return GetInner()->Reject(GetContext(), v8::Undefined(isolate()));
+  return GetInner()->Reject(context, v8::Undefined(isolate()));
 }
 
 v8::Maybe<bool> PromiseBase::Reject(v8::Local<v8::Value> except) {
   v8::HandleScope handle_scope(isolate());
-  gin_helper::MicrotasksScope microtasks_scope(
-      isolate(), GetContext()->GetMicrotaskQueue());
-  v8::Context::Scope context_scope(GetContext());
+  v8::Local<v8::Context> context = GetContext();
+  gin_helper::MicrotasksScope microtasks_scope{
+      isolate(), context->GetMicrotaskQueue(), false,
+      v8::MicrotasksScope::kRunMicrotasks};
+  v8::Context::Scope context_scope(context);
 
-  return GetInner()->Reject(GetContext(), except);
+  return GetInner()->Reject(context, except);
 }
 
-v8::Maybe<bool> PromiseBase::RejectWithErrorMessage(base::StringPiece message) {
+v8::Maybe<bool> PromiseBase::RejectWithErrorMessage(
+    const std::string_view message) {
   v8::HandleScope handle_scope(isolate());
-  gin_helper::MicrotasksScope microtasks_scope(
-      isolate(), GetContext()->GetMicrotaskQueue());
-  v8::Context::Scope context_scope(GetContext());
+  v8::Local<v8::Context> context = GetContext();
+  gin_helper::MicrotasksScope microtasks_scope{
+      isolate(), context->GetMicrotaskQueue(), false,
+      v8::MicrotasksScope::kRunMicrotasks};
+  v8::Context::Scope context_scope(context);
 
   v8::Local<v8::Value> error =
       v8::Exception::Error(gin::StringToV8(isolate(), message));
-  return GetInner()->Reject(GetContext(), (error));
+  return GetInner()->Reject(context, (error));
 }
 
 v8::Local<v8::Context> PromiseBase::GetContext() const {
@@ -88,11 +98,13 @@ v8::Local<v8::Promise> Promise<void>::ResolvedPromise(v8::Isolate* isolate) {
 
 v8::Maybe<bool> Promise<void>::Resolve() {
   v8::HandleScope handle_scope(isolate());
-  gin_helper::MicrotasksScope microtasks_scope(
-      isolate(), GetContext()->GetMicrotaskQueue());
-  v8::Context::Scope context_scope(GetContext());
+  v8::Local<v8::Context> context = GetContext();
+  gin_helper::MicrotasksScope microtasks_scope{
+      isolate(), context->GetMicrotaskQueue(), false,
+      v8::MicrotasksScope::kRunMicrotasks};
+  v8::Context::Scope context_scope(context);
 
-  return GetInner()->Resolve(GetContext(), v8::Undefined(isolate()));
+  return GetInner()->Resolve(context, v8::Undefined(isolate()));
 }
 
 }  // namespace gin_helper

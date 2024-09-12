@@ -5,7 +5,9 @@
 
 #include "shell/browser/ui/inspectable_web_contents.h"
 
+#include <algorithm>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/base64.h"
@@ -15,11 +17,12 @@
 #include "base/json/string_escape.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram.h"
-#include "base/stl_util.h"
 #include "base/strings/pattern.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/timer/timer.h"
 #include "base/uuid.h"
 #include "base/values.h"
 #include "chrome/browser/devtools/devtools_contents_resizing_strategy.h"
@@ -28,7 +31,6 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/file_url_loader.h"
 #include "content/public/browser/host_zoom_map.h"
@@ -65,7 +67,6 @@
 #include "content/public/browser/render_process_host.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "shell/browser/electron_browser_context.h"
 #endif
 
 // static
@@ -128,32 +129,16 @@ base::Value::Dict RectToDictionary(const gfx::Rect& bounds) {
 }
 
 gfx::Rect DictionaryToRect(const base::Value::Dict& dict) {
-  const base::Value* found = dict.Find("x");
-  int x = found ? found->GetInt() : 0;
-
-  found = dict.Find("y");
-  int y = found ? found->GetInt() : 0;
-
-  found = dict.Find("width");
-  int width = found ? found->GetInt() : 800;
-
-  found = dict.Find("height");
-  int height = found ? found->GetInt() : 600;
-
-  return gfx::Rect(x, y, width, height);
-}
-
-bool IsPointInRect(const gfx::Point& point, const gfx::Rect& rect) {
-  return point.x() > rect.x() && point.x() < (rect.width() + rect.x()) &&
-         point.y() > rect.y() && point.y() < (rect.height() + rect.y());
+  return gfx::Rect{dict.FindInt("x").value_or(0), dict.FindInt("y").value_or(0),
+                   dict.FindInt("width").value_or(800),
+                   dict.FindInt("height").value_or(600)};
 }
 
 bool IsPointInScreen(const gfx::Point& point) {
-  for (const auto& display : display::Screen::GetScreen()->GetAllDisplays()) {
-    if (IsPointInRect(point, display.bounds()))
-      return true;
-  }
-  return false;
+  return std::ranges::any_of(display::Screen::GetScreen()->GetAllDisplays(),
+                             [&point](auto const& display) {
+                               return display.bounds().Contains(point);
+                             });
 }
 
 void SetZoomLevelForWebContents(content::WebContents* web_contents,
@@ -162,15 +147,15 @@ void SetZoomLevelForWebContents(content::WebContents* web_contents,
 }
 
 double GetNextZoomLevel(double level, bool out) {
-  double factor = blink::PageZoomLevelToZoomFactor(level);
+  double factor = blink::ZoomLevelToZoomFactor(level);
   size_t size = std::size(kPresetZoomFactors);
   for (size_t i = 0; i < size; ++i) {
-    if (!blink::PageZoomValuesEqual(kPresetZoomFactors[i], factor))
+    if (!blink::ZoomValuesEqual(kPresetZoomFactors[i], factor))
       continue;
     if (out && i > 0)
-      return blink::PageZoomFactorToZoomLevel(kPresetZoomFactors[i - 1]);
+      return blink::ZoomFactorToZoomLevel(kPresetZoomFactors[i - 1]);
     if (!out && i != size - 1)
-      return blink::PageZoomFactorToZoomLevel(kPresetZoomFactors[i + 1]);
+      return blink::ZoomFactorToZoomLevel(kPresetZoomFactors[i + 1]);
   }
   return level;
 }
@@ -225,11 +210,10 @@ class InspectableWebContents::NetworkResourceLoader
                      URLLoaderFactoryHolder url_loader_factory,
                      DispatchCallback callback,
                      base::TimeDelta retry_delay = base::TimeDelta()) {
-    auto resource_loader =
+    bindings->loaders_.insert(
         std::make_unique<InspectableWebContents::NetworkResourceLoader>(
             stream_id, bindings, resource_request, traffic_annotation,
-            std::move(url_loader_factory), std::move(callback), retry_delay);
-    bindings->loaders_.insert(std::move(resource_loader));
+            std::move(url_loader_factory), std::move(callback), retry_delay));
   }
 
   NetworkResourceLoader(
@@ -278,24 +262,14 @@ class InspectableWebContents::NetworkResourceLoader
     response_headers_ = response_head.headers;
   }
 
-  void OnDataReceived(base::StringPiece chunk,
+  // network::SimpleURLLoaderStreamConsumer
+  void OnDataReceived(std::string_view chunk,
                       base::OnceClosure resume) override {
-    base::Value chunkValue;
-
     bool encoded = !base::IsStringUTF8(chunk);
-    if (encoded) {
-      std::string encoded_string;
-      base::Base64Encode(chunk, &encoded_string);
-      chunkValue = base::Value(std::move(encoded_string));
-    } else {
-      chunkValue = base::Value(chunk);
-    }
-    base::Value id(stream_id_);
-    base::Value encodedValue(encoded);
-
-    bindings_->CallClientFunction("DevToolsAPI", "streamWrite", std::move(id),
-                                  std::move(chunkValue),
-                                  std::move(encodedValue));
+    bindings_->CallClientFunction(
+        "DevToolsAPI", "streamWrite", base::Value{stream_id_},
+        base::Value{encoded ? base::Base64Encode(chunk) : chunk},
+        base::Value{encoded});
     std::move(resume).Run();
   }
 
@@ -330,7 +304,7 @@ class InspectableWebContents::NetworkResourceLoader
       std::move(callback_).Run(&response);
     }
 
-    bindings_->loaders_.erase(bindings_->loaders_.find(this));
+    bindings_->loaders_.erase(this);
   }
 
   void OnRetry(base::OnceClosure start_retry) override {}
@@ -431,10 +405,6 @@ InspectableWebContentsDelegate* InspectableWebContents::GetDelegate() const {
   return delegate_;
 }
 
-bool InspectableWebContents::IsGuest() const {
-  return is_guest_;
-}
-
 void InspectableWebContents::ReleaseWebContents() {
   web_contents_.release();
   WebContentsDestroyed();
@@ -501,7 +471,7 @@ void InspectableWebContents::CloseDevTools() {
       managed_devtools_web_contents_.reset();
     }
     embedder_message_dispatcher_.reset();
-    if (!IsGuest())
+    if (!is_guest())
       web_contents_->Focus();
   }
 }
@@ -563,10 +533,6 @@ void InspectableWebContents::CallClientFunction(
       std::move(arguments), std::move(cb));
 }
 
-gfx::Rect InspectableWebContents::GetDevToolsBounds() const {
-  return devtools_bounds_;
-}
-
 void InspectableWebContents::SaveDevToolsBounds(const gfx::Rect& bounds) {
   pref_service_->Set(kDevToolsBoundsPref,
                      base::Value{RectToDictionary(bounds)});
@@ -609,7 +575,7 @@ void InspectableWebContents::LoadCompleted() {
           prefs.FindString("currentDockState");
       base::RemoveChars(*current_dock_state, "\"", &dock_state_);
     }
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
     auto* api_web_contents = api::WebContents::From(GetWebContents());
     if (api_web_contents) {
       auto* win =
@@ -686,8 +652,6 @@ void InspectableWebContents::SetInspectedPageBounds(const gfx::Rect& rect) {
     view_->SetContentsResizingStrategy(DevToolsContentsResizingStrategy{rect});
 }
 
-void InspectableWebContents::InspectElementCompleted() {}
-
 void InspectableWebContents::InspectedURLChanged(const std::string& url) {
   if (managed_devtools_web_contents_) {
     if (devtools_title_.empty()) {
@@ -734,7 +698,7 @@ void InspectableWebContents::LoadNetworkResource(DispatchCallback callback,
   resource_request.site_for_cookies = net::SiteForCookies::FromUrl(gurl);
   resource_request.headers.AddHeadersFromString(headers);
 
-  auto* protocol_registry = ProtocolRegistry::FromBrowserContext(
+  const auto* const protocol_registry = ProtocolRegistry::FromBrowserContext(
       GetDevToolsWebContents()->GetBrowserContext());
   NetworkResourceLoader::URLLoaderFactoryHolder url_loader_factory;
   if (gurl.SchemeIsFile()) {
@@ -743,14 +707,12 @@ void InspectableWebContents::LoadNetworkResource(DispatchCallback callback,
     url_loader_factory = network::SharedURLLoaderFactory::Create(
         std::make_unique<network::WrapperPendingSharedURLLoaderFactory>(
             std::move(pending_remote)));
-  } else if (protocol_registry->IsProtocolRegistered(gurl.scheme())) {
-    auto& protocol_handler = protocol_registry->handlers().at(gurl.scheme());
-    mojo::PendingRemote<network::mojom::URLLoaderFactory> pending_remote =
-        ElectronURLLoaderFactory::Create(protocol_handler.first,
-                                         protocol_handler.second);
+  } else if (const auto* const protocol_handler =
+                 protocol_registry->FindRegistered(gurl.scheme_piece())) {
     url_loader_factory = network::SharedURLLoaderFactory::Create(
         std::make_unique<network::WrapperPendingSharedURLLoaderFactory>(
-            std::move(pending_remote)));
+            ElectronURLLoaderFactory::Create(protocol_handler->first,
+                                             protocol_handler->second)));
   } else {
     auto* partition = GetDevToolsWebContents()
                           ->GetBrowserContext()
@@ -776,6 +738,12 @@ void InspectableWebContents::OpenInNewTab(const std::string& url) {
     delegate_->DevToolsOpenInNewTab(url);
 }
 
+void InspectableWebContents::OpenSearchResultsInNewTab(
+    const std::string& query) {
+  if (delegate_)
+    delegate_->DevToolsOpenSearchResultsInNewTab(query);
+}
+
 void InspectableWebContents::ShowItemInFolder(
     const std::string& file_system_path) {
   if (file_system_path.empty())
@@ -788,9 +756,10 @@ void InspectableWebContents::ShowItemInFolder(
 
 void InspectableWebContents::SaveToFile(const std::string& url,
                                         const std::string& content,
-                                        bool save_as) {
+                                        bool save_as,
+                                        bool is_base64) {
   if (delegate_)
-    delegate_->DevToolsSaveToFile(url, content, save_as);
+    delegate_->DevToolsSaveToFile(url, content, save_as, is_base64);
 }
 
 void InspectableWebContents::AppendToFile(const std::string& url,
@@ -816,9 +785,6 @@ void InspectableWebContents::RemoveFileSystem(
         base::FilePath::FromUTF8Unsafe(file_system_path));
 }
 
-void InspectableWebContents::UpgradeDraggedFileSystemPermissions(
-    const std::string& file_system_url) {}
-
 void InspectableWebContents::IndexPath(int request_id,
                                        const std::string& file_system_path,
                                        const std::string& excluded_folders) {
@@ -839,16 +805,10 @@ void InspectableWebContents::SearchInPath(int request_id,
     delegate_->DevToolsSearchInPath(request_id, file_system_path, query);
 }
 
-void InspectableWebContents::SetWhitelistedShortcuts(
-    const std::string& message) {}
-
 void InspectableWebContents::SetEyeDropperActive(bool active) {
   if (delegate_)
     delegate_->DevToolsSetEyeDropperActive(active);
 }
-void InspectableWebContents::ShowCertificateViewer(
-    const std::string& cert_chain) {}
-
 void InspectableWebContents::ZoomIn() {
   double new_level = GetNextZoomLevel(GetDevToolsZoomLevel(), false);
   SetZoomLevelForWebContents(GetDevToolsWebContents(), new_level);
@@ -865,24 +825,6 @@ void InspectableWebContents::ResetZoom() {
   SetZoomLevelForWebContents(GetDevToolsWebContents(), 0.);
   UpdateDevToolsZoomLevel(0.);
 }
-
-void InspectableWebContents::SetDevicesDiscoveryConfig(
-    bool discover_usb_devices,
-    bool port_forwarding_enabled,
-    const std::string& port_forwarding_config,
-    bool network_discovery_enabled,
-    const std::string& network_discovery_config) {}
-
-void InspectableWebContents::SetDevicesUpdatesEnabled(bool enabled) {}
-
-void InspectableWebContents::PerformActionOnRemotePage(
-    const std::string& page_id,
-    const std::string& action) {}
-
-void InspectableWebContents::OpenRemotePage(const std::string& browser_id,
-                                            const std::string& url) {}
-
-void InspectableWebContents::OpenNodeFrontend() {}
 
 void InspectableWebContents::DispatchProtocolMessageFromDevToolsFrontend(
     const std::string& message) {
@@ -947,7 +889,11 @@ void InspectableWebContents::GetSyncInformation(DispatchCallback callback) {
   std::move(callback).Run(&result);
 }
 
-void InspectableWebContents::ConnectionReady() {}
+void InspectableWebContents::GetHostConfig(DispatchCallback callback) {
+  base::Value::Dict response_dict;
+  base::Value response = base::Value(std::move(response_dict));
+  std::move(callback).Run(&response);
+}
 
 void InspectableWebContents::RegisterExtensionsAPI(const std::string& origin,
                                                    const std::string& script) {
@@ -986,8 +932,8 @@ void InspectableWebContents::DispatchProtocolMessage(
   if (!frontend_loaded_)
     return;
 
-  base::StringPiece str_message(reinterpret_cast<const char*>(message.data()),
-                                message.size());
+  const std::string_view str_message{
+      reinterpret_cast<const char*>(message.data()), message.size()};
   if (str_message.length() < kMaxMessageChunkSize) {
     CallClientFunction("DevToolsAPI", "dispatchMessage",
                        base::Value(std::string(str_message)));
@@ -995,7 +941,7 @@ void InspectableWebContents::DispatchProtocolMessage(
     size_t total_size = str_message.length();
     for (size_t pos = 0; pos < str_message.length();
          pos += kMaxMessageChunkSize) {
-      base::StringPiece str_message_chunk =
+      std::string_view str_message_chunk =
           str_message.substr(pos, kMaxMessageChunkSize);
 
       CallClientFunction(
@@ -1005,9 +951,6 @@ void InspectableWebContents::DispatchProtocolMessage(
     }
   }
 }
-
-void InspectableWebContents::AgentHostClosed(
-    content::DevToolsAgentHost* agent_host) {}
 
 void InspectableWebContents::RenderFrameHostChanged(
     content::RenderFrameHost* old_host,
@@ -1037,7 +980,7 @@ void InspectableWebContents::WebContentsDestroyed() {
 
 bool InspectableWebContents::HandleKeyboardEvent(
     content::WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   auto* delegate = web_contents_->GetDelegate();
   return !delegate || delegate->HandleKeyboardEvent(source, event);
 }

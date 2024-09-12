@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import * as cp from 'node:child_process';
 import { BrowserWindow } from 'electron';
-import * as fs from 'fs-extra';
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -72,15 +72,15 @@ describe('esm', () => {
       if (w) w.close();
       w = null;
       while (tempDirs.length) {
-        await fs.remove(tempDirs.pop()!);
+        await fs.promises.rm(tempDirs.pop()!, { force: true, recursive: true });
       }
     });
 
     async function loadWindowWithPreload (preload: string, webPreferences: Electron.WebPreferences) {
-      const tmpDir = await fs.mkdtemp(path.resolve(os.tmpdir(), 'e-spec-preload-'));
+      const tmpDir = await fs.promises.mkdtemp(path.resolve(os.tmpdir(), 'e-spec-preload-'));
       tempDirs.push(tmpDir);
       const preloadPath = path.resolve(tmpDir, 'preload.mjs');
-      await fs.writeFile(preloadPath, preload);
+      await fs.promises.writeFile(preloadPath, preload);
 
       w = new BrowserWindow({
         show: false,
@@ -141,7 +141,7 @@ describe('esm', () => {
       const hostsUrl = pathToFileURL(process.platform === 'win32' ? 'C:\\Windows\\System32\\drivers\\etc\\hosts' : '/etc/hosts');
 
       describe('without context isolation', () => {
-        it('should use blinks dynamic loader in the main world', async () => {
+        it('should use Blinks dynamic loader in the main world', async () => {
           const [webContents] = await loadWindowWithPreload('', {
             nodeIntegration: true,
             sandbox: false,
@@ -159,6 +159,11 @@ describe('esm', () => {
           // This is a blink specific error message
           expect(error?.message).to.include('Failed to fetch dynamically imported module');
         });
+
+        it('should use import.meta callback handling from Node.js for Node.js modules', async () => {
+          const result = await runFixture(path.resolve(fixturePath, 'import-meta'));
+          expect(result.code).to.equal(0);
+        });
       });
 
       describe('with context isolation', () => {
@@ -173,7 +178,7 @@ describe('esm', () => {
           await fs.promises.unlink(badFilePath);
         });
 
-        it('should use nodes esm dynamic loader in the isolated context', async () => {
+        it('should use Node.js ESM dynamic loader in the isolated context', async () => {
           const [, preloadError] = await loadWindowWithPreload(`await import(${JSON.stringify((pathToFileURL(badFilePath)))})`, {
             nodeIntegration: true,
             sandbox: false,
@@ -185,7 +190,7 @@ describe('esm', () => {
           expect(preloadError!.toString()).to.include('Unknown file extension');
         });
 
-        it('should use blinks dynamic loader in the main world', async () => {
+        it('should use Blinks dynamic loader in the main world', async () => {
           const [webContents] = await loadWindowWithPreload('', {
             nodeIntegration: true,
             sandbox: false,

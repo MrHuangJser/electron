@@ -9,11 +9,11 @@
 #include <vector>
 
 #include "base/functional/bind.h"
-#include "gin/dictionary.h"
 #include "shell/common/gin_converters/std_converter.h"
 #include "shell/common/gin_helper/function_template.h"
 #include "shell/common/gin_helper/locker.h"
 #include "shell/common/gin_helper/microtasks_scope.h"
+#include "v8/include/v8-function.h"
 // Implements safe conversions between JS functions and base::RepeatingCallback.
 
 namespace gin_helper {
@@ -50,8 +50,9 @@ struct V8FunctionInvoker<v8::Local<v8::Value>(ArgTypes...)> {
       return v8::Null(isolate);
     v8::Local<v8::Function> holder = function.NewHandle(isolate);
     v8::Local<v8::Context> context = holder->GetCreationContextChecked();
-    gin_helper::MicrotasksScope microtasks_scope(
-        isolate, context->GetMicrotaskQueue(), true);
+    gin_helper::MicrotasksScope microtasks_scope{
+        isolate, context->GetMicrotaskQueue(), true,
+        v8::MicrotasksScope::kRunMicrotasks};
     v8::Context::Scope context_scope(context);
     std::vector<v8::Local<v8::Value>> args{
         gin::ConvertToV8(isolate, std::forward<ArgTypes>(raw))...};
@@ -75,8 +76,9 @@ struct V8FunctionInvoker<void(ArgTypes...)> {
       return;
     v8::Local<v8::Function> holder = function.NewHandle(isolate);
     v8::Local<v8::Context> context = holder->GetCreationContextChecked();
-    gin_helper::MicrotasksScope microtasks_scope(
-        isolate, context->GetMicrotaskQueue(), true);
+    gin_helper::MicrotasksScope microtasks_scope{
+        isolate, context->GetMicrotaskQueue(), true,
+        v8::MicrotasksScope::kRunMicrotasks};
     v8::Context::Scope context_scope(context);
     std::vector<v8::Local<v8::Value>> args{
         gin::ConvertToV8(isolate, std::forward<ArgTypes>(raw))...};
@@ -99,8 +101,9 @@ struct V8FunctionInvoker<ReturnType(ArgTypes...)> {
       return ret;
     v8::Local<v8::Function> holder = function.NewHandle(isolate);
     v8::Local<v8::Context> context = holder->GetCreationContextChecked();
-    gin_helper::MicrotasksScope microtasks_scope(
-        isolate, context->GetMicrotaskQueue(), true);
+    gin_helper::MicrotasksScope microtasks_scope{
+        isolate, context->GetMicrotaskQueue(), true,
+        v8::MicrotasksScope::kRunMicrotasks};
     v8::Context::Scope context_scope(context);
     std::vector<v8::Local<v8::Value>> args{
         gin::ConvertToV8(isolate, std::forward<ArgTypes>(raw))...};
@@ -114,9 +117,9 @@ struct V8FunctionInvoker<ReturnType(ArgTypes...)> {
 };
 
 // Helper to pass a C++ function to JavaScript.
-using Translater = base::RepeatingCallback<void(gin::Arguments* args)>;
-v8::Local<v8::Value> CreateFunctionFromTranslater(v8::Isolate* isolate,
-                                                  const Translater& translater,
+using Translator = base::RepeatingCallback<void(gin::Arguments* args)>;
+v8::Local<v8::Value> CreateFunctionFromTranslator(v8::Isolate* isolate,
+                                                  const Translator& translator,
                                                   bool one_time);
 v8::Local<v8::Value> BindFunctionWith(v8::Isolate* isolate,
                                       v8::Local<v8::Context> context,
@@ -132,8 +135,9 @@ template <typename ReturnType, typename... ArgTypes>
 struct NativeFunctionInvoker<ReturnType(ArgTypes...)> {
   static void Go(base::RepeatingCallback<ReturnType(ArgTypes...)> val,
                  gin::Arguments* args) {
-    using Indices = typename IndicesGenerator<sizeof...(ArgTypes)>::type;
-    Invoker<Indices, ArgTypes...> invoker(args, 0);
+    using Indices = std::index_sequence_for<ArgTypes...>;
+    Invoker<Indices, ArgTypes...> invoker(args,
+                                          {.holder_is_first_argument = false});
     if (invoker.IsOK())
       invoker.DispatchToCallback(val);
   }
@@ -145,9 +149,9 @@ template <typename Sig>
 v8::Local<v8::Value> CallbackToV8Leaked(
     v8::Isolate* isolate,
     const base::RepeatingCallback<Sig>& val) {
-  Translater translater =
+  Translator translator =
       base::BindRepeating(&NativeFunctionInvoker<Sig>::Go, val);
-  return CreateFunctionFromTranslater(isolate, translater, false);
+  return CreateFunctionFromTranslator(isolate, translator, false);
 }
 
 }  // namespace gin_helper

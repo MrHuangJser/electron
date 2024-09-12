@@ -19,7 +19,8 @@
 #include "third_party/blink/public/common/features.h"
 
 #if BUILDFLAG(IS_MAC)
-#include "device/base/features.h"  // nogncheck
+#include "content/common/features.h"  // nogncheck
+#include "device/base/features.h"     // nogncheck
 #endif
 
 namespace electron {
@@ -37,9 +38,6 @@ void InitializeFeatureList() {
   disable_features +=
       std::string(",") + features::kSpareRendererForSitePerProcess.name;
 
-  // TODO(codebytere): Remove WebSQL support per crbug.com/695592.
-  enable_features += std::string(",") + blink::features::kWebSQLAccess.name;
-
 #if BUILDFLAG(IS_WIN)
   disable_features +=
       // Disable async spellchecker suggestions for Windows, which causes
@@ -49,6 +47,22 @@ void InitializeFeatureList() {
       // 'custom dictionary word list API' spec to crash.
       std::string(",") + spellcheck::kWinDelaySpellcheckServiceInit.name;
 #endif
+
+#if BUILDFLAG(IS_MAC)
+  // Disable window occlusion checker.
+  disable_features +=
+      std::string(",") + features::kMacWebContentsOcclusion.name;
+#endif
+  std::string platform_specific_enable_features =
+      EnablePlatformSpecificFeatures();
+  if (platform_specific_enable_features.size() > 0) {
+    enable_features += std::string(",") + platform_specific_enable_features;
+  }
+  std::string platform_specific_disable_features =
+      DisablePlatformSpecificFeatures();
+  if (platform_specific_disable_features.size() > 0) {
+    disable_features += std::string(",") + platform_specific_disable_features;
+  }
   base::FeatureList::InitInstance(enable_features, disable_features);
 }
 
@@ -59,5 +73,14 @@ void InitializeFieldTrials() {
 
   base::FieldTrialList::CreateTrialsFromString(force_fieldtrials);
 }
+
+#if !BUILDFLAG(IS_MAC)
+std::string EnablePlatformSpecificFeatures() {
+  return "";
+}
+std::string DisablePlatformSpecificFeatures() {
+  return "";
+}
+#endif
 
 }  // namespace electron

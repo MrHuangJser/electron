@@ -27,7 +27,7 @@
   devtools_is_first_responder_ = NO;
   attached_to_window_ = NO;
 
-  if (inspectableWebContentsView_->inspectable_web_contents()->IsGuest()) {
+  if (inspectableWebContentsView_->inspectable_web_contents()->is_guest()) {
     fake_view_ = [[NSView alloc] init];
     [fake_view_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [self addSubview:fake_view_];
@@ -79,6 +79,18 @@
 - (void)notifyDevToolsFocused {
   if (inspectableWebContentsView_->GetDelegate())
     inspectableWebContentsView_->GetDelegate()->DevToolsFocused();
+}
+
+- (void)setCornerRadii:(CGFloat)cornerRadius {
+  auto* inspectable_web_contents =
+      inspectableWebContentsView_->inspectable_web_contents();
+  DCHECK(inspectable_web_contents);
+  auto* webContents = inspectable_web_contents->GetWebContents();
+  if (!webContents)
+    return;
+  auto* webContentsView = webContents->GetNativeView().GetNativeNSView();
+  webContentsView.wantsLayer = YES;
+  webContentsView.layer.cornerRadius = cornerRadius;
 }
 
 - (void)notifyDevToolsResized {
@@ -142,6 +154,11 @@
   }
 }
 
+// TODO: remove NSWindowStyleMaskTexturedBackground.
+// https://github.com/electron/electron/issues/43125
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 - (void)setIsDocked:(BOOL)docked activate:(BOOL)activate {
   // Revert to no-devtools state.
   [self setDevToolsVisible:NO activate:NO];
@@ -183,6 +200,9 @@
   }
   [self setDevToolsVisible:YES activate:activate];
 }
+
+// -Wdeprecated-declarations
+#pragma clang diagnostic pop
 
 - (void)setContentsResizingStrategy:
     (const DevToolsContentsResizingStrategy&)strategy {

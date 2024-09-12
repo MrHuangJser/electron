@@ -7,11 +7,13 @@
 
 #include <windows.h>
 
-#include "shell/browser/native_window_views.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
 
 namespace electron {
+
+class NativeWindowViews;
 
 class ElectronDesktopWindowTreeHostWin : public views::DesktopWindowTreeHostWin,
                                          public ::ui::NativeThemeObserver {
@@ -28,6 +30,7 @@ class ElectronDesktopWindowTreeHostWin : public views::DesktopWindowTreeHostWin,
       const ElectronDesktopWindowTreeHostWin&) = delete;
 
  protected:
+  // views::DesktopWindowTreeHostWin:
   bool PreHandleMSG(UINT message,
                     WPARAM w_param,
                     LPARAM l_param,
@@ -44,7 +47,7 @@ class ElectronDesktopWindowTreeHostWin : public views::DesktopWindowTreeHostWin,
 
  private:
   raw_ptr<NativeWindowViews> native_window_view_;  // weak ref
-  absl::optional<bool> force_should_paint_as_active_;
+  std::optional<bool> force_should_paint_as_active_;
 };
 
 }  // namespace electron

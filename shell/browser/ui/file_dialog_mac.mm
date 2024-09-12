@@ -5,6 +5,7 @@
 #include "shell/browser/ui/file_dialog.h"
 
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -20,6 +21,8 @@
 #include "content/public/browser/browser_thread.h"
 #include "shell/browser/native_window.h"
 #include "shell/common/gin_converters/file_path_converter.h"
+#include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/promise.h"
 #include "shell/common/thread_restrictions.h"
 
 @interface PopUpButtonHandler : NSObject
@@ -441,7 +444,7 @@ void SaveDialogCompletion(int chosen,
     dict.Set("canceled", true);
     dict.Set("filePath", base::FilePath());
 #if IS_MAS_BUILD()
-    dict.Set("bookmark", base::StringPiece());
+    dict.Set("bookmark", std::string_view{});
 #endif
   } else {
     std::string path = base::SysNSStringToUTF8([[dialog URL] path]);

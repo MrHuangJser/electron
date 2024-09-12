@@ -5,6 +5,7 @@
 #include "shell/common/gin_converters/net_converter.h"
 
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "base/values.h"
 #include "gin/converter.h"
 #include "gin/dictionary.h"
+#include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
@@ -243,15 +245,15 @@ bool Converter<net::HttpRequestHeaders>::FromV8(v8::Isolate* isolate,
   if (!ConvertFromV8(isolate, val, &dict))
     return false;
   for (const auto it : dict) {
-    if (it.second.is_string()) {
-      std::string value = it.second.GetString();
-      out->SetHeader(it.first, value);
-    }
+    if (it.second.is_string())
+      out->SetHeader(it.first, std::move(it.second).TakeString());
   }
   return true;
 }
 
-class ChunkedDataPipeReadableStream
+namespace {
+
+class ChunkedDataPipeReadableStream final
     : public gin::Wrappable<ChunkedDataPipeReadableStream> {
  public:
   static gin::Handle<ChunkedDataPipeReadableStream> Create(
@@ -269,6 +271,8 @@ class ChunkedDataPipeReadableStream
                ChunkedDataPipeReadableStream>::GetObjectTemplateBuilder(isolate)
         .SetMethod("read", &ChunkedDataPipeReadableStream::Read);
   }
+
+  const char* GetTypeName() override { return "ChunkedDataPipeReadableStream"; }
 
   static gin::WrapperInfo kWrapperInfo;
 
@@ -358,13 +362,15 @@ class ChunkedDataPipeReadableStream
                               base::Unretained(this)));
     }
 
-    uint32_t num_bytes = buf->ByteLength();
+    size_t num_bytes = buf->ByteLength();
     if (size_ && num_bytes > *size_ - bytes_read_)
       num_bytes = *size_ - bytes_read_;
     MojoResult rv = data_pipe_->ReadData(
-        static_cast<void*>(static_cast<char*>(buf->Buffer()->Data()) +
-                           buf->ByteOffset()),
-        &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+        MOJO_READ_DATA_FLAG_NONE,
+        base::span(static_cast<uint8_t*>(buf->Buffer()->Data()),
+                   buf->ByteLength())
+            .subspan(buf->ByteOffset(), num_bytes),
+        num_bytes);
     if (rv == MOJO_RESULT_OK) {
       bytes_read_ += num_bytes;
       // Not needed for correctness, but this allows the consumer to send the
@@ -482,14 +488,17 @@ class ChunkedDataPipeReadableStream
   mojo::Remote<network::mojom::ChunkedDataPipeGetter> chunked_data_pipe_getter_;
   mojo::ScopedDataPipeConsumerHandle data_pipe_;
   mojo::SimpleWatcher handle_watcher_;
-  absl::optional<uint64_t> size_;
+  std::optional<uint64_t> size_;
   uint64_t bytes_read_ = 0;
   bool is_eof_ = false;
   v8::Global<v8::ArrayBufferView> buf_;
   gin_helper::Promise<int> promise_;
 };
+
 gin::WrapperInfo ChunkedDataPipeReadableStream::kWrapperInfo = {
     gin::kEmbedderNativeGin};
+
+}  // namespace
 
 // static
 v8::Local<v8::Value> Converter<network::ResourceRequestBody>::ToV8(
@@ -691,7 +700,7 @@ bool Converter<net::DnsQueryType>::FromV8(v8::Isolate* isolate,
                                           v8::Local<v8::Value> val,
                                           net::DnsQueryType* out) {
   static constexpr auto Lookup =
-      base::MakeFixedFlatMap<base::StringPiece, net::DnsQueryType>({
+      base::MakeFixedFlatMap<std::string_view, net::DnsQueryType>({
           {"A", net::DnsQueryType::A},
           {"AAAA", net::DnsQueryType::AAAA},
       });
@@ -703,14 +712,13 @@ bool Converter<net::HostResolverSource>::FromV8(v8::Isolate* isolate,
                                                 v8::Local<v8::Value> val,
                                                 net::HostResolverSource* out) {
   using Val = net::HostResolverSource;
-  static constexpr auto Lookup =
-      base::MakeFixedFlatMap<base::StringPiece, Val>({
-          {"any", Val::ANY},
-          {"dns", Val::DNS},
-          {"localOnly", Val::LOCAL_ONLY},
-          {"mdns", Val::MULTICAST_DNS},
-          {"system", Val::SYSTEM},
-      });
+  static constexpr auto Lookup = base::MakeFixedFlatMap<std::string_view, Val>({
+      {"any", Val::ANY},
+      {"dns", Val::DNS},
+      {"localOnly", Val::LOCAL_ONLY},
+      {"mdns", Val::MULTICAST_DNS},
+      {"system", Val::SYSTEM},
+  });
   return FromV8WithLookup(isolate, val, Lookup, out);
 }
 
@@ -720,12 +728,11 @@ bool Converter<network::mojom::ResolveHostParameters::CacheUsage>::FromV8(
     v8::Local<v8::Value> val,
     network::mojom::ResolveHostParameters::CacheUsage* out) {
   using Val = network::mojom::ResolveHostParameters::CacheUsage;
-  static constexpr auto Lookup =
-      base::MakeFixedFlatMap<base::StringPiece, Val>({
-          {"allowed", Val::ALLOWED},
-          {"disallowed", Val::DISALLOWED},
-          {"staleAllowed", Val::STALE_ALLOWED},
-      });
+  static constexpr auto Lookup = base::MakeFixedFlatMap<std::string_view, Val>({
+      {"allowed", Val::ALLOWED},
+      {"disallowed", Val::DISALLOWED},
+      {"staleAllowed", Val::STALE_ALLOWED},
+  });
   return FromV8WithLookup(isolate, val, Lookup, out);
 }
 
@@ -735,11 +742,10 @@ bool Converter<network::mojom::SecureDnsPolicy>::FromV8(
     v8::Local<v8::Value> val,
     network::mojom::SecureDnsPolicy* out) {
   using Val = network::mojom::SecureDnsPolicy;
-  static constexpr auto Lookup =
-      base::MakeFixedFlatMap<base::StringPiece, Val>({
-          {"allow", Val::ALLOW},
-          {"disable", Val::DISABLE},
-      });
+  static constexpr auto Lookup = base::MakeFixedFlatMap<std::string_view, Val>({
+      {"allow", Val::ALLOW},
+      {"disable", Val::DISABLE},
+  });
   return FromV8WithLookup(isolate, val, Lookup, out);
 }
 

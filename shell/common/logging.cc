@@ -5,6 +5,7 @@
 #include "shell/common/logging.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -15,12 +16,11 @@
 #include "base/strings/string_number_conversions.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/common/content_switches.h"
-#include "shell/common/electron_paths.h"
 
 namespace logging {
 
-constexpr base::StringPiece kLogFileName("ELECTRON_LOG_FILE");
-constexpr base::StringPiece kElectronEnableLogging("ELECTRON_ENABLE_LOGGING");
+constexpr std::string_view kLogFileName{"ELECTRON_LOG_FILE"};
+constexpr std::string_view kElectronEnableLogging{"ELECTRON_ENABLE_LOGGING"};
 
 base::FilePath GetLogFileName(const base::CommandLine& command_line) {
   std::string filename = command_line.GetSwitchValueASCII(switches::kLogFile);
@@ -40,6 +40,8 @@ base::FilePath GetLogFileName(const base::CommandLine& command_line) {
     return log_filename;
   }
 }
+
+namespace {
 
 bool HasExplicitLogFile(const base::CommandLine& command_line) {
   std::string filename = command_line.GetSwitchValueASCII(switches::kLogFile);
@@ -94,6 +96,8 @@ LoggingDestination DetermineLoggingDestination(
     return LOG_TO_FILE | (also_log_to_stderr ? LOG_TO_STDERR : 0);
   return LOG_TO_SYSTEM_DEBUG_LOG | LOG_TO_STDERR;
 }
+
+}  // namespace
 
 void InitElectronLogging(const base::CommandLine& command_line,
                          bool is_preinit) {

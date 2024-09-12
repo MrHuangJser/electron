@@ -14,9 +14,9 @@
 #include "base/files/file_util.h"
 #include "base/hash/md5.h"
 #include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "base/win/windows_version.h"
 #include "shell/browser/notifications/win/windows_toast_notification.h"
 #include "shell/common/thread_restrictions.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -37,9 +37,7 @@ bool SaveIconToPath(const SkBitmap& bitmap, const base::FilePath& path) {
   if (!gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false, &png_data))
     return false;
 
-  char* data = reinterpret_cast<char*>(&png_data[0]);
-  int size = static_cast<int>(png_data.size());
-  return base::WriteFile(path, data, size) == size;
+  return base::WriteFile(path, png_data);
 }
 
 }  // namespace
@@ -75,8 +73,8 @@ std::wstring NotificationPresenterWin::SaveIconToFilesystem(
   if (origin.is_valid()) {
     filename = base::MD5String(origin.spec()) + ".png";
   } else {
-    base::TimeTicks now = base::TimeTicks::Now();
-    filename = std::to_string(now.ToInternalValue()) + ".png";
+    const int64_t now_usec = base::Time::Now().since_origin().InMicroseconds();
+    filename = base::NumberToString(now_usec) + ".png";
   }
 
   ScopedAllowBlockingForElectron allow_blocking;

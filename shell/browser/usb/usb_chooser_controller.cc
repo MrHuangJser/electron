@@ -4,21 +4,20 @@
 
 #include "shell/browser/usb/usb_chooser_controller.h"
 
-#include <stddef.h>
+#include <algorithm>
+#include <cstddef>
 #include <utility>
 
 #include "base/functional/bind.h"
-#include "base/ranges/algorithm.h"
-#include "base/strings/stringprintf.h"
-#include "base/strings/utf_string_conversions.h"
-#include "build/build_config.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "gin/data_object_builder.h"
 #include "services/device/public/cpp/usb/usb_utils.h"
 #include "services/device/public/mojom/usb_enumeration_options.mojom.h"
+#include "shell/browser/api/electron_api_session.h"
 #include "shell/browser/javascript_environment.h"
+#include "shell/browser/usb/electron_usb_delegate.h"
 #include "shell/browser/usb/usb_chooser_context_factory.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_converters/content_converter.h"
@@ -120,6 +119,12 @@ void UsbChooserController::GotUsbDeviceList(
     auto* rfh = content::RenderFrameHost::FromID(render_frame_host_id_);
     v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
     v8::HandleScope scope(isolate);
+
+    // "select-usb-device" should respect |filters|.
+    std::erase_if(devices, [this](const auto& device_info) {
+      return !DisplayDevice(*device_info);
+    });
+
     v8::Local<v8::Object> details = gin::DataObjectBuilder(isolate)
                                         .Set("deviceList", devices)
                                         .Set("frame", rfh)
@@ -141,7 +146,7 @@ bool UsbChooserController::DisplayDevice(
     return false;
   }
 
-  if (base::ranges::any_of(
+  if (std::ranges::any_of(
           options_->exclusion_filters, [&device_info](const auto& filter) {
             return device::UsbDeviceFilterMatches(*filter, device_info);
           })) {

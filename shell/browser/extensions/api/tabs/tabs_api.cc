@@ -4,8 +4,10 @@
 
 #include "shell/browser/extensions/api/tabs/tabs_api.h"
 
-#include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/strings/pattern.h"
@@ -71,7 +73,7 @@ void ZoomModeToZoomSettings(WebContentsZoomController::ZoomMode zoom_mode,
 // Returns true if either |boolean| is disengaged, or if |boolean| and
 // |value| are equal. This function is used to check if a tab's parameters match
 // those of the browser.
-bool MatchesBool(const absl::optional<bool>& boolean, bool value) {
+bool MatchesBool(const std::optional<bool>& boolean, bool value) {
   return !boolean || *boolean == value;
 }
 
@@ -210,7 +212,7 @@ bool TabsExecuteScriptFunction::ShouldRemoveCSS() const {
 }
 
 ExtensionFunction::ResponseAction TabsReloadFunction::Run() {
-  absl::optional<tabs::Reload::Params> params =
+  std::optional<tabs::Reload::Params> params =
       tabs::Reload::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -233,7 +235,7 @@ ExtensionFunction::ResponseAction TabsReloadFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
-  absl::optional<tabs::Query::Params> params =
+  std::optional<tabs::Query::Params> params =
       tabs::Query::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -255,8 +257,8 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
   }
 
   std::string title = params->query_info.title.value_or(std::string());
-  absl::optional<bool> audible = params->query_info.audible;
-  absl::optional<bool> muted = params->query_info.muted;
+  std::optional<bool> audible = params->query_info.audible;
+  std::optional<bool> muted = params->query_info.muted;
 
   base::Value::List result;
 
@@ -321,7 +323,7 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction TabsGetFunction::Run() {
-  absl::optional<tabs::Get::Params> params = tabs::Get::Params::Create(args());
+  std::optional<tabs::Get::Params> params = tabs::Get::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
   int tab_id = params->tab_id;
 
@@ -344,12 +346,13 @@ ExtensionFunction::ResponseAction TabsGetFunction::Run() {
   }
 
   tab.active = contents->IsFocused();
+  tab.last_accessed = wc->GetLastActiveTime().InMillisecondsFSinceUnixEpoch();
 
   return RespondNow(ArgumentList(tabs::Get::Results::Create(std::move(tab))));
 }
 
 ExtensionFunction::ResponseAction TabsSetZoomFunction::Run() {
-  absl::optional<tabs::SetZoom::Params> params =
+  std::optional<tabs::SetZoom::Params> params =
       tabs::SetZoom::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -365,11 +368,10 @@ ExtensionFunction::ResponseAction TabsSetZoomFunction::Run() {
     return RespondNow(Error(error));
 
   auto* zoom_controller = contents->GetZoomController();
-  double zoom_level =
-      params->zoom_factor > 0
-          ? blink::PageZoomFactorToZoomLevel(params->zoom_factor)
-          : blink::PageZoomFactorToZoomLevel(
-                zoom_controller->GetDefaultZoomFactor());
+  double zoom_level = params->zoom_factor > 0
+                          ? blink::ZoomFactorToZoomLevel(params->zoom_factor)
+                          : blink::ZoomFactorToZoomLevel(
+                                zoom_controller->default_zoom_factor());
 
   zoom_controller->SetZoomLevel(zoom_level);
 
@@ -377,7 +379,7 @@ ExtensionFunction::ResponseAction TabsSetZoomFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction TabsGetZoomFunction::Run() {
-  absl::optional<tabs::GetZoomSettings::Params> params =
+  std::optional<tabs::GetZoomSettings::Params> params =
       tabs::GetZoomSettings::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -387,13 +389,13 @@ ExtensionFunction::ResponseAction TabsGetZoomFunction::Run() {
     return RespondNow(Error("No such tab"));
 
   double zoom_level = contents->GetZoomController()->GetZoomLevel();
-  double zoom_factor = blink::PageZoomLevelToZoomFactor(zoom_level);
+  double zoom_factor = blink::ZoomLevelToZoomFactor(zoom_level);
 
   return RespondNow(ArgumentList(tabs::GetZoom::Results::Create(zoom_factor)));
 }
 
 ExtensionFunction::ResponseAction TabsGetZoomSettingsFunction::Run() {
-  absl::optional<tabs::GetZoomSettings::Params> params =
+  std::optional<tabs::GetZoomSettings::Params> params =
       tabs::GetZoomSettings::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -408,7 +410,7 @@ ExtensionFunction::ResponseAction TabsGetZoomSettingsFunction::Run() {
   tabs::ZoomSettings zoom_settings;
   ZoomModeToZoomSettings(zoom_mode, &zoom_settings);
   zoom_settings.default_zoom_factor =
-      blink::PageZoomLevelToZoomFactor(zoom_controller->GetDefaultZoomLevel());
+      blink::ZoomLevelToZoomFactor(zoom_controller->GetDefaultZoomLevel());
 
   return RespondNow(
       ArgumentList(tabs::GetZoomSettings::Results::Create(zoom_settings)));
@@ -417,7 +419,7 @@ ExtensionFunction::ResponseAction TabsGetZoomSettingsFunction::Run() {
 ExtensionFunction::ResponseAction TabsSetZoomSettingsFunction::Run() {
   using tabs::ZoomSettings;
 
-  absl::optional<tabs::SetZoomSettings::Params> params =
+  std::optional<tabs::SetZoomSettings::Params> params =
       tabs::SetZoomSettings::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -465,6 +467,8 @@ ExtensionFunction::ResponseAction TabsSetZoomSettingsFunction::Run() {
 
   return RespondNow(NoArguments());
 }
+
+namespace {
 
 bool IsKillURL(const GURL& url) {
 #if DCHECK_IS_ON()
@@ -585,10 +589,12 @@ base::expected<GURL, std::string> PrepareURLForNavigation(
   return url;
 }
 
+}  // namespace
+
 TabsUpdateFunction::TabsUpdateFunction() : web_contents_(nullptr) {}
 
 ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
-  absl::optional<tabs::Update::Params> params =
+  std::optional<tabs::Update::Params> params =
       tabs::Update::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 

@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { BrowserView, BrowserWindow, screen, webContents } from 'electron/main';
 import { closeWindow } from './lib/window-helpers';
 import { defer, ifit, startRemoteControlApp } from './lib/spec-helpers';
-import { areColorsSimilar, captureScreen, getPixelColor } from './lib/screen-helpers';
+import { ScreenCapture, hasCapturableScreen } from './lib/screen-helpers';
 import { once } from 'node:events';
 
 describe('BrowserView module', () => {
@@ -13,7 +13,7 @@ describe('BrowserView module', () => {
   let view: BrowserView;
 
   beforeEach(() => {
-    expect(webContents.getAllWebContents()).to.have.length(0);
+    expect(webContents.getAllWebContents().length).to.equal(0, 'expected no webContents to exist');
     w = new BrowserWindow({
       show: false,
       width: 400,
@@ -25,10 +25,12 @@ describe('BrowserView module', () => {
   });
 
   afterEach(async () => {
-    const p = once(w.webContents, 'destroyed');
-    await closeWindow(w);
-    w = null as any;
-    await p;
+    if (!w.isDestroyed()) {
+      const p = once(w.webContents, 'destroyed');
+      await closeWindow(w);
+      w = null as any;
+      await p;
+    }
 
     if (view && view.webContents) {
       const p = once(view.webContents, 'destroyed');
@@ -37,7 +39,7 @@ describe('BrowserView module', () => {
       await p;
     }
 
-    expect(webContents.getAllWebContents()).to.have.length(0);
+    expect(webContents.getAllWebContents().length).to.equal(0, 'expected no webContents to exist');
   });
 
   it('sets the correct class name on the prototype', () => {
@@ -49,8 +51,14 @@ describe('BrowserView module', () => {
     await wc.loadURL('about:blank');
 
     view = new BrowserView({ webContents: wc } as any);
+    expect(view.webContents === wc).to.be.true('view.webContents === wc');
 
     expect(view.webContents.getURL()).to.equal('about:blank');
+  });
+
+  it('has type browserView', () => {
+    view = new BrowserView();
+    expect(view.webContents.getType()).to.equal('browserView');
   });
 
   describe('BrowserView.setBackgroundColor()', () => {
@@ -59,15 +67,15 @@ describe('BrowserView module', () => {
       view.setBackgroundColor('#000');
     });
 
-    it('throws for invalid args', () => {
+    // We now treat invalid args as "no background".
+    it('does not throw for invalid args', () => {
       view = new BrowserView();
       expect(() => {
-        view.setBackgroundColor(null as any);
-      }).to.throw(/conversion failure/);
+        view.setBackgroundColor({} as any);
+      }).not.to.throw();
     });
 
-    // Linux and arm64 platforms (WOA and macOS) do not return any capture sources
-    ifit(process.platform === 'darwin' && process.arch === 'x64')('sets the background color to transparent if none is set', async () => {
+    ifit(hasCapturableScreen())('sets the background color to transparent if none is set', async () => {
       const display = screen.getPrimaryDisplay();
       const WINDOW_BACKGROUND_COLOR = '#55ccbb';
 
@@ -81,17 +89,11 @@ describe('BrowserView module', () => {
       w.setBrowserView(view);
       await view.webContents.loadURL('data:text/html,hello there');
 
-      const screenCapture = await captureScreen();
-      const centerColor = getPixelColor(screenCapture, {
-        x: display.size.width / 2,
-        y: display.size.height / 2
-      });
-
-      expect(areColorsSimilar(centerColor, WINDOW_BACKGROUND_COLOR)).to.be.true();
+      const screenCapture = new ScreenCapture(display);
+      await screenCapture.expectColorAtCenterMatches(WINDOW_BACKGROUND_COLOR);
     });
 
-    // Linux and arm64 platforms (WOA and macOS) do not return any capture sources
-    ifit(process.platform === 'darwin' && process.arch === 'x64')('successfully applies the background color', async () => {
+    ifit(hasCapturableScreen())('successfully applies the background color', async () => {
       const WINDOW_BACKGROUND_COLOR = '#55ccbb';
       const VIEW_BACKGROUND_COLOR = '#ff00ff';
       const display = screen.getPrimaryDisplay();
@@ -107,13 +109,8 @@ describe('BrowserView module', () => {
       w.setBackgroundColor(VIEW_BACKGROUND_COLOR);
       await view.webContents.loadURL('data:text/html,hello there');
 
-      const screenCapture = await captureScreen();
-      const centerColor = getPixelColor(screenCapture, {
-        x: display.size.width / 2,
-        y: display.size.height / 2
-      });
-
-      expect(areColorsSimilar(centerColor, VIEW_BACKGROUND_COLOR)).to.be.true();
+      const screenCapture = new ScreenCapture(display);
+      await screenCapture.expectColorAtCenterMatches(VIEW_BACKGROUND_COLOR);
     });
   });
 
@@ -128,7 +125,148 @@ describe('BrowserView module', () => {
       view = new BrowserView();
       expect(() => {
         view.setAutoResize(null as any);
-      }).to.throw(/conversion failure/);
+      }).to.throw(/Invalid auto resize options/);
+    });
+
+    it('does not resize when the BrowserView has no AutoResize', () => {
+      view = new BrowserView();
+      w.addBrowserView(view);
+      view.setBounds({ x: 0, y: 0, width: 400, height: 200 });
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 200
+      });
+      w.setSize(800, 400);
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 200
+      });
+    });
+
+    it('resizes horizontally when the window is resized horizontally', () => {
+      view = new BrowserView();
+      view.setAutoResize({ width: true, height: false });
+      w.addBrowserView(view);
+      view.setBounds({ x: 0, y: 0, width: 400, height: 200 });
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 200
+      });
+      w.setSize(800, 400);
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 200
+      });
+    });
+
+    it('resizes vertically when the window is resized vertically', () => {
+      view = new BrowserView();
+      view.setAutoResize({ width: false, height: true });
+      w.addBrowserView(view);
+      view.setBounds({ x: 0, y: 0, width: 200, height: 400 });
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 400
+      });
+      w.setSize(400, 800);
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 800
+      });
+    });
+
+    it('resizes both vertically and horizontally when the window is resized', () => {
+      view = new BrowserView();
+      view.setAutoResize({ width: true, height: true });
+      w.addBrowserView(view);
+      view.setBounds({ x: 0, y: 0, width: 400, height: 400 });
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 400
+      });
+      w.setSize(800, 800);
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 800
+      });
+    });
+
+    it('resizes proportionally', () => {
+      view = new BrowserView();
+      view.setAutoResize({ width: true, height: false });
+      w.addBrowserView(view);
+      view.setBounds({ x: 0, y: 0, width: 200, height: 100 });
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100
+      });
+      w.setSize(800, 400);
+      expect(view.getBounds()).to.deep.equal({
+        x: 0,
+        y: 0,
+        width: 600,
+        height: 100
+      });
+    });
+
+    it('does not move x if horizontal: false', () => {
+      view = new BrowserView();
+      view.setAutoResize({ width: true });
+      w.addBrowserView(view);
+      view.setBounds({ x: 200, y: 0, width: 200, height: 100 });
+      w.setSize(800, 400);
+      expect(view.getBounds()).to.deep.equal({
+        x: 200,
+        y: 0,
+        width: 600,
+        height: 100
+      });
+    });
+
+    it('moves x if horizontal: true', () => {
+      view = new BrowserView();
+      view.setAutoResize({ horizontal: true });
+      w.addBrowserView(view);
+      view.setBounds({ x: 200, y: 0, width: 200, height: 100 });
+      w.setSize(800, 400);
+      expect(view.getBounds()).to.deep.equal({
+        x: 400,
+        y: 0,
+        width: 400,
+        height: 100
+      });
+    });
+
+    it('moves x if horizontal: true width: true', () => {
+      view = new BrowserView();
+      view.setAutoResize({ horizontal: true, width: true });
+      w.addBrowserView(view);
+      view.setBounds({ x: 200, y: 0, width: 200, height: 100 });
+      w.setSize(800, 400);
+      expect(view.getBounds()).to.deep.equal({
+        x: 400,
+        y: 0,
+        width: 400,
+        height: 100
+      });
     });
   });
 
@@ -230,6 +368,19 @@ describe('BrowserView module', () => {
       const view = w.getBrowserView();
       expect(view).to.be.null('view');
     });
+
+    it('throws if multiple BrowserViews are attached', () => {
+      view = new BrowserView();
+      w.setBrowserView(view);
+      const view2 = new BrowserView();
+      defer(() => view2.webContents.destroy());
+      w.addBrowserView(view2);
+      defer(() => w.removeBrowserView(view2));
+
+      expect(() => {
+        w.getBrowserView();
+      }).to.throw(/has multiple BrowserViews/);
+    });
   });
 
   describe('BrowserWindow.addBrowserView()', () => {
@@ -251,14 +402,6 @@ describe('BrowserView module', () => {
       w.addBrowserView(view);
     });
 
-    it('does not crash if the BrowserView webContents are destroyed prior to window addition', () => {
-      expect(() => {
-        const view1 = new BrowserView();
-        view1.webContents.destroy();
-        w.addBrowserView(view1);
-      }).to.not.throw();
-    });
-
     it('does not crash if the webContents is destroyed after a URL is loaded', () => {
       view = new BrowserView();
       expect(async () => {
@@ -271,12 +414,18 @@ describe('BrowserView module', () => {
     it('can handle BrowserView reparenting', async () => {
       view = new BrowserView();
 
+      expect(view.ownerWindow).to.be.null('ownerWindow');
+
       w.addBrowserView(view);
       view.webContents.loadURL('about:blank');
       await once(view.webContents, 'did-finish-load');
 
+      expect(view.ownerWindow).to.equal(w);
+
       const w2 = new BrowserWindow({ show: false });
       w2.addBrowserView(view);
+
+      expect(view.ownerWindow).to.equal(w2);
 
       w.close();
 
@@ -287,6 +436,32 @@ describe('BrowserView module', () => {
       w = new BrowserWindow({ show: false });
       w2.close();
       w2.destroy();
+    });
+
+    it('allows attaching a BrowserView with a previously-closed webContents', async () => {
+      const w2 = new BrowserWindow({ show: false });
+      const view = new BrowserView();
+
+      expect(view.ownerWindow).to.be.null('ownerWindow');
+      view.webContents.close();
+      w2.addBrowserView(view);
+      expect(view.ownerWindow).to.equal(w2);
+
+      w2.webContents.loadURL('about:blank');
+      await once(w2.webContents, 'did-finish-load');
+      w2.close();
+    });
+
+    it('allows attaching a BrowserView with a previously-destroyed webContents', async () => {
+      const view = new BrowserView();
+
+      expect(view.ownerWindow).to.be.null('ownerWindow');
+      view.webContents.destroy();
+      w.addBrowserView(view);
+      expect(view.ownerWindow).to.equal(w);
+
+      w.webContents.loadURL('about:blank');
+      await once(w.webContents, 'did-finish-load');
     });
   });
 
@@ -370,22 +545,113 @@ describe('BrowserView module', () => {
       win2.close();
       win2.destroy();
     });
+
+    it('should reorder the BrowserView to the top if it is already in the window', () => {
+      view = new BrowserView();
+      const view2 = new BrowserView();
+      defer(() => view2.webContents.destroy());
+      w.addBrowserView(view);
+      w.addBrowserView(view2);
+      defer(() => w.removeBrowserView(view2));
+
+      w.setTopBrowserView(view);
+      const views = w.getBrowserViews();
+      expect(views.indexOf(view)).to.equal(views.length - 1);
+    });
   });
 
-  describe('BrowserView.webContents.getOwnerBrowserWindow()', () => {
+  describe('BrowserView owning window', () => {
     it('points to owning window', () => {
       view = new BrowserView();
       expect(view.webContents.getOwnerBrowserWindow()).to.be.null('owner browser window');
+      expect(view.ownerWindow).to.be.null('ownerWindow');
 
       w.setBrowserView(view);
       expect(view.webContents.getOwnerBrowserWindow()).to.equal(w);
+      expect(view.ownerWindow).to.equal(w);
 
       w.setBrowserView(null);
       expect(view.webContents.getOwnerBrowserWindow()).to.be.null('owner browser window');
+      expect(view.ownerWindow).to.be.null('ownerWindow');
+    });
+
+    it('works correctly when the webContents is destroyed', async () => {
+      view = new BrowserView();
+      w.setBrowserView(view);
+
+      expect(view.webContents.getOwnerBrowserWindow()).to.equal(w);
+      expect(view.ownerWindow).to.equal(w);
+
+      const destroyed = once(view.webContents, 'destroyed');
+      view.webContents.close();
+      await destroyed;
+
+      expect(view.ownerWindow).to.equal(w);
+    });
+
+    it('works correctly when owner window is closed', async () => {
+      view = new BrowserView();
+      w.setBrowserView(view);
+
+      expect(view.webContents.getOwnerBrowserWindow()).to.equal(w);
+      expect(view.ownerWindow).to.equal(w);
+
+      const destroyed = once(w, 'closed');
+      w.close();
+      await destroyed;
+
+      expect(view.ownerWindow).to.equal(null);
     });
   });
 
   describe('shutdown behavior', () => {
+    it('emits the destroyed event when the host BrowserWindow is closed', async () => {
+      view = new BrowserView();
+      w.addBrowserView(view);
+      await view.webContents.loadURL(`data:text/html,
+        <html>
+          <body>
+            <div id="bv_id">HELLO BROWSERVIEW</div>
+          </body>
+        </html>
+      `);
+
+      const query = 'document.getElementById("bv_id").textContent';
+      const contentBefore = await view.webContents.executeJavaScript(query);
+      expect(contentBefore).to.equal('HELLO BROWSERVIEW');
+
+      w.close();
+
+      const destroyed = once(view.webContents, 'destroyed');
+      const closed = once(w, 'closed');
+      await Promise.all([destroyed, closed]);
+    });
+
+    it('does not destroy its webContents if an owner BrowserWindow close event is prevented', async () => {
+      view = new BrowserView();
+      w.addBrowserView(view);
+      await view.webContents.loadURL(`data:text/html,
+        <html>
+          <body>
+            <div id="bv_id">HELLO BROWSERVIEW</div>
+          </body>
+        </html>
+      `);
+
+      const query = 'document.getElementById("bv_id").textContent';
+      const contentBefore = await view.webContents.executeJavaScript(query);
+      expect(contentBefore).to.equal('HELLO BROWSERVIEW');
+
+      w.once('close', (e) => {
+        e.preventDefault();
+      });
+
+      w.close();
+
+      const contentAfter = await view.webContents.executeJavaScript(query);
+      expect(contentAfter).to.equal('HELLO BROWSERVIEW');
+    });
+
     it('does not crash on exit', async () => {
       const rc = await startRemoteControlApp();
       await rc.remotely(() => {

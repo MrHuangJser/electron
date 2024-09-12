@@ -4,7 +4,6 @@
 
 #include "shell/browser/api/electron_api_notification.h"
 
-#include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
 #include "gin/handle.h"
 #include "shell/browser/api/electron_api_menu.h"
@@ -12,6 +11,7 @@
 #include "shell/browser/electron_browser_client.h"
 #include "shell/common/gin_converters/image_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/error_thrower.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
 #include "url/gurl.h"
@@ -58,10 +58,7 @@ Notification::Notification(gin::Arguments* args) {
     opts.Get("title", &title_);
     opts.Get("subtitle", &subtitle_);
     opts.Get("body", &body_);
-    has_icon_ = opts.Get("icon", &icon_);
-    if (has_icon_) {
-      opts.Get("icon", &icon_path_);
-    }
+    opts.Get("icon", &icon_);
     opts.Get("silent", &silent_);
     opts.Get("replyPlaceholder", &reply_placeholder_);
     opts.Get("urgency", &urgency_);
@@ -87,55 +84,6 @@ gin::Handle<Notification> Notification::New(gin_helper::ErrorThrower thrower,
     return gin::Handle<Notification>();
   }
   return gin::CreateHandle(thrower.isolate(), new Notification(args));
-}
-
-// Getters
-std::u16string Notification::GetTitle() const {
-  return title_;
-}
-
-std::u16string Notification::GetSubtitle() const {
-  return subtitle_;
-}
-
-std::u16string Notification::GetBody() const {
-  return body_;
-}
-
-bool Notification::GetSilent() const {
-  return silent_;
-}
-
-bool Notification::GetHasReply() const {
-  return has_reply_;
-}
-
-std::u16string Notification::GetTimeoutType() const {
-  return timeout_type_;
-}
-
-std::u16string Notification::GetReplyPlaceholder() const {
-  return reply_placeholder_;
-}
-
-std::u16string Notification::GetSound() const {
-  return sound_;
-}
-
-std::u16string Notification::GetUrgency() const {
-  return urgency_;
-}
-
-std::vector<electron::NotificationAction> Notification::GetActions() const {
-  return actions_;
-}
-
-std::u16string Notification::GetCloseButtonText() const {
-  return close_button_text_;
-}
-
-std::u16string Notification::GetToastXml() const {
-  return toast_xml_;
 }
 
 // Setters
@@ -263,25 +211,23 @@ void Notification::FillObjectTemplate(v8::Isolate* isolate,
   gin::ObjectTemplateBuilder(isolate, GetClassName(), templ)
       .SetMethod("show", &Notification::Show)
       .SetMethod("close", &Notification::Close)
-      .SetProperty("title", &Notification::GetTitle, &Notification::SetTitle)
-      .SetProperty("subtitle", &Notification::GetSubtitle,
+      .SetProperty("title", &Notification::title, &Notification::SetTitle)
+      .SetProperty("subtitle", &Notification::subtitle,
                    &Notification::SetSubtitle)
-      .SetProperty("body", &Notification::GetBody, &Notification::SetBody)
-      .SetProperty("silent", &Notification::GetSilent, &Notification::SetSilent)
-      .SetProperty("hasReply", &Notification::GetHasReply,
+      .SetProperty("body", &Notification::body, &Notification::SetBody)
+      .SetProperty("silent", &Notification::is_silent, &Notification::SetSilent)
+      .SetProperty("hasReply", &Notification::has_reply,
                    &Notification::SetHasReply)
-      .SetProperty("timeoutType", &Notification::GetTimeoutType,
+      .SetProperty("timeoutType", &Notification::timeout_type,
                    &Notification::SetTimeoutType)
-      .SetProperty("replyPlaceholder", &Notification::GetReplyPlaceholder,
+      .SetProperty("replyPlaceholder", &Notification::reply_placeholder,
                    &Notification::SetReplyPlaceholder)
-      .SetProperty("urgency", &Notification::GetUrgency,
-                   &Notification::SetUrgency)
-      .SetProperty("sound", &Notification::GetSound, &Notification::SetSound)
-      .SetProperty("actions", &Notification::GetActions,
-                   &Notification::SetActions)
-      .SetProperty("closeButtonText", &Notification::GetCloseButtonText,
+      .SetProperty("urgency", &Notification::urgency, &Notification::SetUrgency)
+      .SetProperty("sound", &Notification::sound, &Notification::SetSound)
+      .SetProperty("actions", &Notification::actions, &Notification::SetActions)
+      .SetProperty("closeButtonText", &Notification::close_button_text,
                    &Notification::SetCloseButtonText)
-      .SetProperty("toastXml", &Notification::GetToastXml,
+      .SetProperty("toastXml", &Notification::toast_xml,
                    &Notification::SetToastXml)
       .Build();
 }

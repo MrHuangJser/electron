@@ -4,7 +4,6 @@
 
 #include "shell/renderer/web_worker_observer.h"
 
-#include <set>
 #include <utility>
 
 #include "base/no_destructor.h"
@@ -66,6 +65,26 @@ void WebWorkerObserver::WorkerScriptReadyForEvaluation(
   std::shared_ptr<node::Environment> env =
       node_bindings_->CreateEnvironment(worker_context, nullptr);
 
+  // We need to use the Blink implementation of fetch in web workers
+  // Node.js deletes the global fetch function when their fetch implementation
+  // is disabled, so we need to save and re-add it after the Node.js environment
+  // is loaded. See corresponding change in node/init.ts.
+  v8::Local<v8::Object> global = worker_context->Global();
+
+  std::vector<std::string> keys = {"fetch", "Response", "FormData", "Request",
+                                   "Headers"};
+  for (const auto& key : keys) {
+    v8::MaybeLocal<v8::Value> value =
+        global->Get(worker_context, gin::StringToV8(isolate, key.c_str()));
+    if (!value.IsEmpty()) {
+      std::string blink_key = "blink" + key;
+      global
+          ->Set(worker_context, gin::StringToV8(isolate, blink_key.c_str()),
+                value.ToLocalChecked())
+          .Check();
+    }
+  }
+
   // Add Electron extended APIs.
   electron_bindings_->BindTo(env->isolate(), env->process_object());
 
@@ -98,7 +117,7 @@ void WebWorkerObserver::ContextWillDestroy(v8::Local<v8::Context> context) {
   DCHECK_EQ(microtask_queue->GetMicrotasksScopeDepth(), 0);
   microtask_queue->set_microtasks_policy(v8::MicrotasksPolicy::kExplicit);
 
-  std::erase_if(environments_,
+  base::EraseIf(environments_,
                 [env](auto const& item) { return item.get() == env; });
 
   microtask_queue->set_microtasks_policy(old_policy);

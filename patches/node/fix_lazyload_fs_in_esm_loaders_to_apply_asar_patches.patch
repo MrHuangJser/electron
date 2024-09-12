@@ -6,7 +6,7 @@ Subject: fix: lazyload fs in esm loaders to apply asar patches
 Changes { foo } from fs to just "fs.foo" so that our patching of fs is applied to esm loaders
 
 diff --git a/lib/internal/modules/esm/load.js b/lib/internal/modules/esm/load.js
-index f108b567a910805ff86f0baf75fa1a6102ad28d6..8406e8ca319533d6186c5d457e951b7a845b6b72 100644
+index ac24cf305bd5995ad13b37ee36f9e1fe3589c5d7..22248b753c14960122f1d6b9bfe6b89fdb8d2010 100644
 --- a/lib/internal/modules/esm/load.js
 +++ b/lib/internal/modules/esm/load.js
 @@ -10,7 +10,7 @@ const { kEmptyObject } = require('internal/util');
@@ -18,7 +18,7 @@ index f108b567a910805ff86f0baf75fa1a6102ad28d6..8406e8ca319533d6186c5d457e951b7a
  
  // Do not eagerly grab .manifest, it may be in TDZ
  const policy = getOptionValue('--experimental-policy') ?
-@@ -40,8 +40,7 @@ async function getSource(url, context) {
+@@ -42,8 +42,7 @@ async function getSource(url, context) {
    let responseURL = href;
    let source;
    if (protocol === 'file:') {
@@ -28,7 +28,7 @@ index f108b567a910805ff86f0baf75fa1a6102ad28d6..8406e8ca319533d6186c5d457e951b7a
    } else if (protocol === 'data:') {
      const match = RegExpPrototypeExec(DATA_URL_PATTERN, url.pathname);
      if (!match) {
-@@ -80,7 +79,7 @@ function getSourceSync(url, context) {
+@@ -82,7 +81,7 @@ function getSourceSync(url, context) {
    const responseURL = href;
    let source;
    if (protocol === 'file:') {
@@ -38,7 +38,7 @@ index f108b567a910805ff86f0baf75fa1a6102ad28d6..8406e8ca319533d6186c5d457e951b7a
      const match = RegExpPrototypeExec(DATA_URL_PATTERN, url.pathname);
      if (!match) {
 diff --git a/lib/internal/modules/esm/resolve.js b/lib/internal/modules/esm/resolve.js
-index 2d077cc182b40e0bdce2d71d0471e96e6d30222a..34fd6613fa24d628fc026ac11e5be7217a20fff4 100644
+index 52cdb7d5e14a18ed7b1b65e429729cf47dce3f98..69f73f829706deddc4f328b78af9d58434af647d 100644
 --- a/lib/internal/modules/esm/resolve.js
 +++ b/lib/internal/modules/esm/resolve.js
 @@ -24,7 +24,7 @@ const {
@@ -50,7 +50,16 @@ index 2d077cc182b40e0bdce2d71d0471e96e6d30222a..34fd6613fa24d628fc026ac11e5be721
  const { getOptionValue } = require('internal/options');
  // Do not eagerly grab .manifest, it may be in TDZ
  const policy = getOptionValue('--experimental-policy') ?
-@@ -257,7 +257,7 @@ function finalizeResolution(resolved, base, preserveSymlinks) {
+@@ -251,7 +251,7 @@ function finalizeResolution(resolved, base, preserveSymlinks) {
+     throw err;
+   }
+ 
+-  const stats = internalModuleStat(toNamespacedPath(StringPrototypeEndsWith(path, '/') ?
++  const stats = internalFsBinding.internalModuleStat(toNamespacedPath(StringPrototypeEndsWith(path, '/') ?
+     StringPrototypeSlice(path, -1) : path));
+ 
+   // Check for stats.isDirectory()
+@@ -267,7 +267,7 @@ function finalizeResolution(resolved, base, preserveSymlinks) {
    }
  
    if (!preserveSymlinks) {
@@ -59,20 +68,29 @@ index 2d077cc182b40e0bdce2d71d0471e96e6d30222a..34fd6613fa24d628fc026ac11e5be721
        [internalFS.realpathCacheKey]: realpathCache,
      });
      const { search, hash } = resolved;
+@@ -826,7 +826,7 @@ function packageResolve(specifier, base, conditions) {
+   let packageJSONPath = fileURLToPath(packageJSONUrl);
+   let lastPath;
+   do {
+-    const stat = internalModuleStat(toNamespacedPath(StringPrototypeSlice(packageJSONPath, 0,
++    const stat = internalFsBinding.internalModuleStat(toNamespacedPath(StringPrototypeSlice(packageJSONPath, 0,
+                                                                           packageJSONPath.length - 13)));
+     // Check for !stat.isDirectory()
+     if (stat !== 1) {
 diff --git a/lib/internal/modules/esm/translators.js b/lib/internal/modules/esm/translators.js
-index bda102b266b17936efc453d039213517c4ef921c..dbbe37474c70addfbf8cf805c29732dcd38c74f6 100644
+index 89ca269294ee1afa7f5aeb0ac6b8958f7a8b49d0..f3dfc69cd2cdec50bc3b3f7cb2d63349812d87dd 100644
 --- a/lib/internal/modules/esm/translators.js
 +++ b/lib/internal/modules/esm/translators.js
-@@ -32,7 +32,7 @@ function lazyTypes() {
+@@ -36,7 +36,7 @@ const {
  
- const { containsModuleSyntax } = internalBinding('contextify');
+ const { BuiltinModule } = require('internal/bootstrap/realm');
  const assert = require('internal/assert');
 -const { readFileSync } = require('fs');
 +const fs = require('fs');
  const { dirname, extname, isAbsolute } = require('path');
  const {
    loadBuiltinModule,
-@@ -355,7 +355,7 @@ translators.set('commonjs', async function commonjsStrategy(url, source,
+@@ -356,7 +356,7 @@ translators.set('commonjs', async function commonjsStrategy(url, source,
  
    try {
      // We still need to read the FS to detect the exports.

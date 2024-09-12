@@ -16,6 +16,7 @@
 #include "include/core/SkColor.h"
 #include "shell/browser/background_throttling_source.h"
 #include "shell/browser/browser.h"
+#include "shell/browser/draggable_region_provider.h"
 #include "shell/browser/native_window_features.h"
 #include "shell/browser/ui/drag_util.h"
 #include "shell/browser/window_list.h"
@@ -23,7 +24,6 @@
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/gin_helper/persistent_dictionary.h"
 #include "shell/common/options_switches.h"
-#include "third_party/skia/include/core/SkRegion.h"
 #include "ui/base/hit_test.h"
 #include "ui/compositor/compositor.h"
 #include "ui/views/widget/widget.h"
@@ -33,7 +33,6 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "ui/base/win/shell.h"
 #include "ui/display/win/screen_win.h"
 #endif
 
@@ -47,7 +46,7 @@ namespace gin {
 template <>
 struct Converter<electron::NativeWindow::TitleBarStyle> {
   static bool FromV8(v8::Isolate* isolate,
-                     v8::Handle<v8::Value> val,
+                     v8::Local<v8::Value> val,
                      electron::NativeWindow::TitleBarStyle* out) {
     using TitleBarStyle = electron::NativeWindow::TitleBarStyle;
     std::string title_bar_style;
@@ -92,6 +91,8 @@ gfx::Size GetExpandedWindowSize(const NativeWindow* window, gfx::Size size) {
 
 }  // namespace
 
+const char kElectronNativeWindowKey[] = "__ELECTRON_NATIVE_WINDOW__";
+
 NativeWindow::NativeWindow(const gin_helper::Dictionary& options,
                            NativeWindow* parent)
     : widget_(std::make_unique<views::Widget>()), parent_(parent) {
@@ -120,10 +121,6 @@ NativeWindow::NativeWindow(const gin_helper::Dictionary& options,
       int height;
       if (titlebar_overlay_dict.Get(options::kOverlayHeight, &height))
         titlebar_overlay_height_ = height;
-
-#if !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC))
-      DCHECK(false);
-#endif
     }
   }
 
@@ -295,7 +292,7 @@ void NativeWindow::SetSize(const gfx::Size& size, bool animate) {
   SetBounds(gfx::Rect(GetPosition(), size), animate);
 }
 
-gfx::Size NativeWindow::GetSize() {
+gfx::Size NativeWindow::GetSize() const {
   return GetBounds().size();
 }
 
@@ -303,7 +300,7 @@ void NativeWindow::SetPosition(const gfx::Point& position, bool animate) {
   SetBounds(gfx::Rect(position, GetSize()), animate);
 }
 
-gfx::Point NativeWindow::GetPosition() {
+gfx::Point NativeWindow::GetPosition() const {
   return GetBounds().origin();
 }
 
@@ -311,7 +308,7 @@ void NativeWindow::SetContentSize(const gfx::Size& size, bool animate) {
   SetSize(ContentBoundsToWindowBounds(gfx::Rect(size)).size(), animate);
 }
 
-gfx::Size NativeWindow::GetContentSize() {
+gfx::Size NativeWindow::GetContentSize() const {
   return GetContentBounds().size();
 }
 
@@ -319,11 +316,11 @@ void NativeWindow::SetContentBounds(const gfx::Rect& bounds, bool animate) {
   SetBounds(ContentBoundsToWindowBounds(bounds), animate);
 }
 
-gfx::Rect NativeWindow::GetContentBounds() {
+gfx::Rect NativeWindow::GetContentBounds() const {
   return WindowBoundsToContentBounds(GetBounds());
 }
 
-bool NativeWindow::IsNormal() {
+bool NativeWindow::IsNormal() const {
   return !IsMinimized() && !IsMaximized() && !IsFullscreen();
 }
 
@@ -430,11 +427,11 @@ void NativeWindow::SetSheetOffset(const double offsetX, const double offsetY) {
   sheet_offset_y_ = offsetY;
 }
 
-double NativeWindow::GetSheetOffsetX() {
+double NativeWindow::GetSheetOffsetX() const {
   return sheet_offset_x_;
 }
 
-double NativeWindow::GetSheetOffsetY() {
+double NativeWindow::GetSheetOffsetY() const {
   return sheet_offset_y_;
 }
 
@@ -442,51 +439,27 @@ bool NativeWindow::IsTabletMode() const {
   return false;
 }
 
-void NativeWindow::SetRepresentedFilename(const std::string& filename) {}
-
-std::string NativeWindow::GetRepresentedFilename() {
+std::string NativeWindow::GetRepresentedFilename() const {
   return "";
 }
 
-void NativeWindow::SetDocumentEdited(bool edited) {}
-
-bool NativeWindow::IsDocumentEdited() {
+bool NativeWindow::IsDocumentEdited() const {
   return false;
 }
 
-void NativeWindow::SetFocusable(bool focusable) {}
-
-bool NativeWindow::IsFocusable() {
+bool NativeWindow::IsFocusable() const {
   return false;
 }
-
-void NativeWindow::SetMenu(ElectronMenuModel* menu) {}
 
 void NativeWindow::SetParentWindow(NativeWindow* parent) {
   parent_ = parent;
 }
 
-void NativeWindow::InvalidateShadow() {}
-
-void NativeWindow::SetAutoHideCursor(bool auto_hide) {}
-
-void NativeWindow::SelectPreviousTab() {}
-
-void NativeWindow::SelectNextTab() {}
-
-void NativeWindow::ShowAllTabs() {}
-
-void NativeWindow::MergeAllWindows() {}
-
-void NativeWindow::MoveTabToNewWindow() {}
-
-void NativeWindow::ToggleTabBar() {}
-
 bool NativeWindow::AddTabbedWindow(NativeWindow* window) {
   return true;  // for non-Mac platforms
 }
 
-absl::optional<std::string> NativeWindow::GetTabbingIdentifier() const {
+std::optional<std::string> NativeWindow::GetTabbingIdentifier() const {
   return "";  // for non-Mac platforms
 }
 
@@ -501,29 +474,15 @@ void NativeWindow::SetBackgroundMaterial(const std::string& type) {
 void NativeWindow::SetTouchBar(
     std::vector<gin_helper::PersistentDictionary> items) {}
 
-void NativeWindow::RefreshTouchBarItem(const std::string& item_id) {}
-
 void NativeWindow::SetEscapeTouchBarItem(
     gin_helper::PersistentDictionary item) {}
 
-void NativeWindow::SetAutoHideMenuBar(bool auto_hide) {}
-
-bool NativeWindow::IsMenuBarAutoHide() {
+bool NativeWindow::IsMenuBarAutoHide() const {
   return false;
 }
 
-void NativeWindow::SetMenuBarVisibility(bool visible) {}
-
-bool NativeWindow::IsMenuBarVisible() {
+bool NativeWindow::IsMenuBarVisible() const {
   return true;
-}
-
-double NativeWindow::GetAspectRatio() {
-  return aspect_ratio_;
-}
-
-gfx::Size NativeWindow::GetAspectRatioExtraSize() {
-  return aspect_ratio_extraSize_;
 }
 
 void NativeWindow::SetAspectRatio(double aspect_ratio,
@@ -532,12 +491,7 @@ void NativeWindow::SetAspectRatio(double aspect_ratio,
   aspect_ratio_extraSize_ = extra_size;
 }
 
-void NativeWindow::PreviewFile(const std::string& path,
-                               const std::string& display_name) {}
-
-void NativeWindow::CloseFilePreview() {}
-
-absl::optional<gfx::Rect> NativeWindow::GetWindowControlsOverlayRect() {
+std::optional<gfx::Rect> NativeWindow::GetWindowControlsOverlayRect() {
   return overlay_rect_;
 }
 
@@ -762,6 +716,11 @@ int NativeWindow::NonClientHitTest(const gfx::Point& point) {
       return border_hit;
   }
 #endif
+
+  // This is to disable dragging in HTML5 full screen mode.
+  // Details: https://github.com/electron/electron/issues/41002
+  if (GetWidget()->IsFullscreen())
+    return HTNOWHERE;
 
   for (auto* provider : draggable_region_providers_) {
     int hit = provider->NonClientHitTest(point);
